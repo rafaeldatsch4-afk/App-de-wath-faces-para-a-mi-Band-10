@@ -7,6 +7,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -32,6 +33,7 @@ import io.github.rafaeldatsch4afk.mibandfaces.MainViewModel
 
 private enum class Tab(val label: String, val icon: ImageVector) {
     CONNECTION("Conexão", Icons.Filled.Bluetooth),
+    KEY("Chave", Icons.Filled.Key),
     LOGS("Logs", Icons.AutoMirrored.Filled.List),
 }
 
@@ -78,6 +80,7 @@ fun MainScreen(vm: MainViewModel) {
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (tab) {
                 Tab.CONNECTION -> ConnectionScreen(vm, gate)
+                Tab.KEY -> KeyScreen(vm)
                 Tab.LOGS -> LogScreen(vm.log)
             }
         }

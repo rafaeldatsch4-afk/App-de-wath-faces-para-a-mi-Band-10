@@ -2,28 +2,51 @@ package io.github.rafaeldatsch4afk.mibandfaces
 
 import android.app.Application
 import android.bluetooth.BluetoothManager
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.rafaeldatsch4afk.mibandfaces.band.BandClient
+import io.github.rafaeldatsch4afk.mibandfaces.band.CompanionInfo
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BandScanner
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BandTransport
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BleTransport
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.FoundDevice
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.SppTransport
+import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKey
+import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKeyStore
 import io.github.rafaeldatsch4afk.mibandfaces.log.PacketLog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     val log = PacketLog()
     private val settings = Settings(app)
     private val adapter = app.getSystemService(BluetoothManager::class.java)?.adapter
     val scanner = BandScanner(app, adapter, log)
-    val client = BandClient(log)
+    val client = BandClient(
+        log,
+        CompanionInfo(
+            apiLevel = Build.VERSION.SDK_INT,
+            phoneModel = Build.MODEL ?: "Android",
+            // Mesmo critério do Gadgetbridge: as duas letras do idioma, em maiúsculas.
+            region = Locale.getDefault().language.take(2).uppercase(Locale.ROOT).ifEmpty { "EN" },
+        ),
+    )
+    private val keyStore = AuthKeyStore(app)
+
+    /** Chave salva (normalizada) ou null. Só a versão mascarada vai para a tela. */
+    private val _savedKey = MutableStateFlow(keyStore.load())
+    val savedKeyMasked: StateFlow<String?> = _savedKey
+        .map { it?.let(AuthKey::mask) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, _savedKey.value?.let(AuthKey::mask))
 
     private val _darkTheme = MutableStateFlow(settings.darkTheme)
     val darkTheme: StateFlow<Boolean> = _darkTheme.asStateFlow()
@@ -83,15 +106,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!scanner.bond(address)) _message.value = "O Android não iniciou o pareamento. Tente de novo."
     }
 
+    /** Valida e salva a chave. Retorna a mensagem de erro, ou null se deu certo. */
+    fun saveKey(input: String): String? {
+        val key = AuthKey.normalize(input).getOrElse { return it.message }
+        return try {
+            keyStore.save(key)
+            _savedKey.value = key
+            log.info("Auth key salva no Keystore (${AuthKey.mask(key)})")
+            null
+        } catch (e: Exception) {
+            log.error("Falha ao salvar a chave no Keystore", e)
+            "Não consegui salvar a chave no Keystore: ${e.message}"
+        }
+    }
+
+    fun deleteKey() {
+        keyStore.clear()
+        _savedKey.value = null
+        log.info("Auth key apagada")
+    }
+
     fun connect() {
         val address = _selected.value?.address ?: run {
             _message.value = "Escolha a banda primeiro"
             return
         }
+        val key = _savedKey.value ?: run {
+            _message.value = "Configure a auth key na aba Chave primeiro"
+            return
+        }
         viewModelScope.launch {
             try {
                 scanner.stop()
-                client.connect(createTransport(address))
+                client.connect(createTransport(address), AuthKey.toBytes(key))
             } catch (e: SecurityException) {
                 _message.value = "Permissão de Bluetooth negada"
             } catch (e: Exception) {

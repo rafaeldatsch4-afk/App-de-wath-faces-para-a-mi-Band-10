@@ -1,62 +1,231 @@
 package io.github.rafaeldatsch4afk.mibandfaces.band
 
+import io.github.rafaeldatsch4afk.mibandfaces.band.Commands.isA
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BandTransport
 import io.github.rafaeldatsch4afk.mibandfaces.log.PacketLog
+import io.github.rafaeldatsch4afk.mibandfaces.proto.Command
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.LinkConfig
+import io.github.rafaeldatsch4afk.mibandfaces.protocol.SppV2
+import io.github.rafaeldatsch4afk.mibandfaces.protocol.SppV2Cipher
+import io.github.rafaeldatsch4afk.mibandfaces.protocol.XiaomiCrypto
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.XiaomiLink
+import io.github.rafaeldatsch4afk.mibandfaces.util.toHexPreview
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withTimeout
+import java.security.SecureRandom
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** Estado da conexão, mostrado na tela de conexão. */
 sealed interface BandState {
     data object Disconnected : BandState
     data class Connecting(val step: String) : BandState
-    data class Connected(val transport: String) : BandState
+
+    /** Conectado e autenticado: pronto para comandos. */
+    data class Ready(val transport: String) : BandState
     data class Failed(val message: String) : BandState
 }
 
+/** Informações da banda (comandos 2/2 e 2/1). */
+data class BandInfo(
+    val model: String? = null,
+    val firmware: String? = null,
+    val serial: String? = null,
+    val batteryPercent: Int? = null,
+)
+
+class BandTimeoutException(message: String) : Exception(message)
+class NotConnectedException : Exception("A banda não está conectada")
+
 /**
- * Cliente de alto nível da banda. Nesta etapa: abre o transporte, negocia o SPP V2 e mantém o
- * estado da conexão.
+ * Cliente de alto nível da banda: abre o enlace, autentica e troca comandos protobuf.
+ * Os pedidos registram quem espera a resposta antes de enviar, para não perder respostas rápidas.
  */
 class BandClient(
     private val log: PacketLog,
+    private val companion: CompanionInfo,
     private val linkConfig: LinkConfig = LinkConfig(),
+    private val requestTimeoutMs: Long = 10_000,
 ) {
+    private class Waiter(val match: (Command) -> Boolean, val reply: CompletableDeferred<Command>)
 
     private val _state = MutableStateFlow<BandState>(BandState.Disconnected)
     val state: StateFlow<BandState> = _state.asStateFlow()
 
+    private val _info = MutableStateFlow(BandInfo())
+    val info: StateFlow<BandInfo> = _info.asStateFlow()
+
     @Volatile
     private var link: XiaomiLink? = null
+    private val waiters = CopyOnWriteArrayList<Waiter>()
 
-    suspend fun connect(transport: BandTransport) {
+    /** Chamado para cada comando recebido que nenhum pedido estava esperando. */
+    var onUnsolicited: (Command) -> Unit = {}
+
+    val isReady: Boolean get() = _state.value is BandState.Ready
+
+    /** Conecta, negocia o SPP V2 e autentica com a [authKey] de 16 bytes. */
+    suspend fun connect(transport: BandTransport, authKey: ByteArray) {
+        require(authKey.size == 16) { "a auth key deve ter 16 bytes" }
         disconnect()
         val newLink = XiaomiLink(transport, log, linkConfig)
         link = newLink
-        _state.value = BandState.Connecting("Abrindo ${transport.description}…")
         try {
+            _state.value = BandState.Connecting("Abrindo ${transport.description}…")
             newLink.open(LinkListener(newLink))
-            _state.value = BandState.Connected(transport.description)
-            log.info("Conectado (${transport.description}), sessão SPP V2 aberta")
+            _state.value = BandState.Connecting("Autenticando…")
+            authenticate(newLink, authKey)
+            _state.value = BandState.Ready(transport.description)
+            log.info("Pronto: autenticado por ${transport.description}")
         } catch (e: Exception) {
-            link = null
+            if (link === newLink) link = null
             newLink.close()
+            failAllWaiters(e)
             _state.value = BandState.Failed(e.message ?: e.javaClass.simpleName)
             throw e
         }
+        refreshInfo()
     }
 
     fun disconnect() {
         val old = link ?: return
         link = null
         old.close()
+        failAllWaiters(NotConnectedException())
         _state.value = BandState.Disconnected
     }
 
+    private suspend fun authenticate(l: XiaomiLink, authKey: ByteArray) {
+        val phoneNonce = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        val step1 = request(XiaomiAuth.buildNonceCommand(phoneNonce), "autenticação (passo 1)", l) {
+            it.isA(XiaomiAuth.COMMAND_TYPE, XiaomiAuth.CMD_NONCE)
+        }
+        val account = step1.auth
+        if (account.hasErrorCode() && account.errorCode != 0) {
+            throw AuthException("A banda recusou a autenticação (código ${account.errorCode}): ${XiaomiAuth.describeAccountError(account.errorCode)}")
+        }
+        if (!account.hasDeviceVerify()) throw AuthException("Resposta inesperada da banda no passo 1 da autenticação")
+
+        val bandNonce = account.deviceVerify.nonce.toByteArray()
+        val keys = XiaomiCrypto.deriveSessionKeys(authKey, phoneNonce, bandNonce)
+        if (!XiaomiAuth.bandHmacMatches(keys, phoneNonce, account.deviceVerify)) {
+            throw AuthException("Chave de autenticação incorreta (o HMAC da banda não confere). Confira a auth key.")
+        }
+        log.info("HMAC da banda confere: a auth key está certa")
+
+        val step2 = request(XiaomiAuth.buildConfirmCommand(keys, phoneNonce, bandNonce, companion), "autenticação (passo 2)", l) {
+            it.isA(XiaomiAuth.COMMAND_TYPE, XiaomiAuth.CMD_AUTH)
+        }
+        if (step2.auth.hasErrorCode() && step2.auth.errorCode != 0) {
+            throw AuthException("A banda recusou a confirmação (código ${step2.auth.errorCode}): ${XiaomiAuth.describeAccountError(step2.auth.errorCode)}")
+        }
+        l.cipher = SppV2Cipher(keys)
+    }
+
+    /** Pede modelo, firmware e bateria. Falhas aqui não derrubam a conexão. */
+    suspend fun refreshInfo() {
+        try {
+            val info = request(Commands.simple(Commands.SYSTEM, Commands.SYSTEM_DEVICE_INFO), "informações da banda") {
+                it.isA(Commands.SYSTEM, Commands.SYSTEM_DEVICE_INFO)
+            }.system.deviceInfo
+            _info.update { it.copy(model = info.model, firmware = info.firmware, serial = info.serialNumber) }
+        } catch (e: Exception) {
+            log.warn("Não consegui ler as informações da banda: ${e.message}")
+        }
+        try {
+            val battery = request(Commands.simple(Commands.SYSTEM, Commands.SYSTEM_BATTERY), "bateria") {
+                it.isA(Commands.SYSTEM, Commands.SYSTEM_BATTERY)
+            }.system.power.battery
+            _info.update { it.copy(batteryPercent = battery.level) }
+        } catch (e: Exception) {
+            log.warn("Não consegui ler a bateria: ${e.message}")
+        }
+    }
+
+    /** Envia um comando sem esperar resposta (só o ACK de transporte). */
+    suspend fun send(command: Command) {
+        sendOn(currentLink(), command)
+    }
+
+    /** Envia um comando e espera a resposta que satisfaz [match]. */
+    suspend fun request(
+        command: Command,
+        what: String,
+        timeoutMs: Long = requestTimeoutMs,
+        match: (Command) -> Boolean,
+    ): Command = request(command, what, currentLink(), timeoutMs, match)
+
+    private suspend fun request(
+        command: Command,
+        what: String,
+        l: XiaomiLink,
+        timeoutMs: Long = requestTimeoutMs,
+        match: (Command) -> Boolean,
+    ): Command {
+        val waiter = Waiter(match, CompletableDeferred())
+        waiters += waiter
+        try {
+            sendOn(l, command)
+            return withTimeout(timeoutMs) { waiter.reply.await() }
+        } catch (e: TimeoutCancellationException) {
+            throw BandTimeoutException("A banda não respondeu: $what")
+        } finally {
+            waiters -= waiter
+        }
+    }
+
+    /** Envia bytes crus no canal de dados (partes do upload). Retorna quando a banda der ACK. */
+    internal suspend fun enqueueData(body: ByteArray) =
+        currentLink().enqueue(SppV2.CHANNEL_DATA, body, encrypt = false)
+
+    internal val linkWindow: Int get() = link?.effectiveWindow ?: 1
+
+    private fun currentLink(): XiaomiLink = link ?: throw NotConnectedException()
+
+    private suspend fun sendOn(l: XiaomiLink, command: Command) {
+        // Autenticação (tipo 1) vai em texto puro; o resto vai cifrado depois da autenticação.
+        val encrypt = command.type != XiaomiAuth.COMMAND_TYPE
+        val bytes = command.toByteArray()
+        log.info("→ comando ${command.type}/${command.subtype}${if (encrypt) " (cifrado)" else ""}: ${bytes.toHexPreview()}")
+        l.send(SppV2.CHANNEL_PROTOBUF, bytes, encrypt)
+    }
+
     private fun onPacket(channel: Int, body: ByteArray) {
-        log.debug("Pacote no canal $channel (${body.size} bytes)")
+        if (channel != SppV2.CHANNEL_PROTOBUF) {
+            log.debug("Pacote ignorado no canal $channel (${body.size} bytes)")
+            return
+        }
+        val command = try {
+            Command.parseFrom(body)
+        } catch (e: Exception) {
+            log.error("Não consegui decodificar o protobuf: ${body.toHexPreview()}", e)
+            return
+        }
+        log.info("← comando ${command.type}/${command.subtype}: ${body.toHexPreview()}")
+        handlePassive(command)
+        val waiter = waiters.firstOrNull { it.match(command) }
+        if (waiter != null) {
+            waiters -= waiter
+            waiter.reply.complete(command)
+        } else {
+            onUnsolicited(command)
+        }
+    }
+
+    /** Atualizações que a banda pode mandar a qualquer momento. */
+    private fun handlePassive(command: Command) {
+        if (command.isA(Commands.SYSTEM, Commands.SYSTEM_BATTERY) && command.system.power.hasBattery()) {
+            _info.update { it.copy(batteryPercent = command.system.power.battery.level) }
+        }
+    }
+
+    private fun failAllWaiters(error: Exception) {
+        for (w in waiters) w.reply.completeExceptionally(error)
+        waiters.clear()
     }
 
     /** Um listener por enlace, para que o fechamento de um enlace antigo não afete o atual. */
@@ -68,6 +237,8 @@ class BandClient(
         override fun onClosed(cause: Throwable?) {
             if (link !== owner) return
             link = null
+            val error = cause as? Exception ?: NotConnectedException()
+            failAllWaiters(error)
             _state.value = if (cause != null) BandState.Failed(cause.message ?: "Conexão perdida") else BandState.Disconnected
         }
     }

@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.rafaeldatsch4afk.mibandfaces.MainViewModel
 import io.github.rafaeldatsch4afk.mibandfaces.TransportKind
+import io.github.rafaeldatsch4afk.mibandfaces.band.BandInfo
 import io.github.rafaeldatsch4afk.mibandfaces.band.BandState
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.FoundDevice
 
@@ -48,6 +49,8 @@ fun ConnectionScreen(vm: MainViewModel, gate: PermissionGate) {
     val scanning by vm.scanner.scanning.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val transport by vm.transport.collectAsStateWithLifecycle()
+    val info by vm.client.info.collectAsStateWithLifecycle()
+    val savedKey by vm.savedKeyMasked.collectAsStateWithLifecycle()
     var showAll by rememberSaveable { mutableStateOf(false) }
 
     val list = devices.values
@@ -60,7 +63,7 @@ fun ConnectionScreen(vm: MainViewModel, gate: PermissionGate) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { Spacer(Modifier.size(4.dp)) }
-        item { StatusCard(vm, state) }
+        item { StatusCard(vm, state, info, hasKey = savedKey != null) }
 
         item {
             SectionCard("Banda") {
@@ -81,7 +84,7 @@ fun ConnectionScreen(vm: MainViewModel, gate: PermissionGate) {
                         OutlinedButton(onClick = { gate.runWithPermission { vm.bond() } }) { Text("Parear") }
                     }
                 }
-                val connected = state is BandState.Connected
+                val connected = state is BandState.Ready
                 val connecting = state is BandState.Connecting
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (connected || connecting) {
@@ -153,12 +156,12 @@ fun ConnectionScreen(vm: MainViewModel, gate: PermissionGate) {
 }
 
 @Composable
-private fun StatusCard(vm: MainViewModel, state: BandState) {
+private fun StatusCard(vm: MainViewModel, state: BandState, info: BandInfo, hasKey: Boolean) {
     SectionCard("Status") {
         val (text, busy) = when (state) {
             BandState.Disconnected -> "Desconectado" to false
             is BandState.Connecting -> state.step to true
-            is BandState.Connected -> "Conectado por ${state.transport}" to false
+            is BandState.Ready -> "Conectado e autenticado (${state.transport})" to false
             is BandState.Failed -> "Erro: ${state.message}" to false
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -171,8 +174,14 @@ private fun StatusCard(vm: MainViewModel, state: BandState) {
                 color = if (state is BandState.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
             )
         }
+        if (state is BandState.Ready) {
+            info.model?.let { LabeledValue("Modelo", it) }
+            info.firmware?.let { LabeledValue("Firmware", it) }
+            info.batteryPercent?.let { LabeledValue("Bateria", "$it%") }
+        }
         if (!vm.hasBluetooth) WarningBox("Este aparelho não tem Bluetooth.")
         else if (!vm.bluetoothEnabled) WarningBox("O Bluetooth está desligado.")
+        if (!hasKey) WarningBox("Falta a auth key: configure na aba Chave.", color = MaterialTheme.colorScheme.primary)
     }
 }
 

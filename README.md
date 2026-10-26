@@ -12,7 +12,8 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 - [x] Conexão por Bluetooth Clássico (SPP/RFCOMM) ou BLE V2 (GATT FE95)
 - [x] Sondagem de versão SPP e sessão SPP V2 com ACK/NACK, reenvio e janela de envio
 - [x] Log detalhado dos pacotes (aba Logs: copiar/compartilhar)
-- [ ] Autenticação com a auth key
+- [x] Autenticação com a auth key (handshake miwear-auth, AES-CCM/CTR), chave guardada no Android Keystore
+- [x] Informações da banda (modelo, firmware, bateria)
 - [ ] Envio do arquivo de watch face
 - [ ] Lista de faces instaladas
 
