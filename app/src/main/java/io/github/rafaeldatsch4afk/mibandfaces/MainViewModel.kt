@@ -2,19 +2,31 @@ package io.github.rafaeldatsch4afk.mibandfaces
 
 import android.app.Application
 import android.bluetooth.BluetoothManager
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.rafaeldatsch4afk.mibandfaces.band.BandClient
+import io.github.rafaeldatsch4afk.mibandfaces.band.BandState
+import io.github.rafaeldatsch4afk.mibandfaces.band.FaceAlreadyInstalledException
+import io.github.rafaeldatsch4afk.mibandfaces.band.InstallProgress
+import io.github.rafaeldatsch4afk.mibandfaces.band.InstalledFace
+import io.github.rafaeldatsch4afk.mibandfaces.band.WatchfaceManager
 import io.github.rafaeldatsch4afk.mibandfaces.band.CompanionInfo
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BandScanner
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BandTransport
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BleTransport
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.FoundDevice
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.SppTransport
+import io.github.rafaeldatsch4afk.mibandfaces.face.ArgbImage
+import io.github.rafaeldatsch4afk.mibandfaces.face.FaceFile
+import io.github.rafaeldatsch4afk.mibandfaces.face.FacePreview
 import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKey
 import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKeyStore
 import io.github.rafaeldatsch4afk.mibandfaces.log.PacketLog
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +36,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -41,6 +54,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         ),
     )
     private val keyStore = AuthKeyStore(app)
+    val watchfaces = WatchfaceManager(client, log)
 
     /** Chave salva (normalizada) ou null. Só a versão mascarada vai para a tela. */
     private val _savedKey = MutableStateFlow(keyStore.load())
@@ -62,6 +76,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val message: StateFlow<String?> = _message.asStateFlow()
 
     private var scanTimeout: Job? = null
+
+    /** Arquivo de watch face escolhido e o resultado da validação. */
+    data class SelectedFace(val fileName: String, val parsed: FaceFile, val preview: ArgbImage?)
+
+    private val _selectedFace = MutableStateFlow<SelectedFace?>(null)
+    val selectedFace: StateFlow<SelectedFace?> = _selectedFace.asStateFlow()
+
+    sealed interface InstallState {
+        data object Idle : InstallState
+        data class Running(val progress: InstallProgress) : InstallState
+        data class Done(val message: String) : InstallState
+        data class Failed(val message: String) : InstallState
+
+        /** A mesma face já está na banda: perguntar se deve remover a antiga. */
+        data class AskReplace(val existing: InstalledFace) : InstallState
+    }
+
+    private val _install = MutableStateFlow<InstallState>(InstallState.Idle)
+    val install: StateFlow<InstallState> = _install.asStateFlow()
+    private var installJob: Job? = null
+
+    init {
+        // Ao autenticar, lê a lista de faces; ao desconectar, esquece a lista.
+        viewModelScope.launch {
+            client.state.collect { state ->
+                when (state) {
+                    is BandState.Ready -> runCatching { watchfaces.refresh() }.onFailure {
+                        log.warn("Não consegui ler a lista de faces: ${it.message}")
+                    }
+                    is BandState.Disconnected, is BandState.Failed -> watchfaces.clear()
+                    else -> Unit
+                }
+            }
+        }
+    }
 
     val hasBluetooth: Boolean get() = adapter != null
     val bluetoothEnabled: Boolean get() = adapter?.isEnabled == true
@@ -148,6 +197,114 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun disconnect() = client.disconnect()
+
+    // ---------------------------------------------------------------- watch faces ---
+
+    fun pickFace(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val (name, size) = withContext(Dispatchers.IO) { describe(uri) }
+                if (size != null && size > FaceFile.MAX_SIZE) {
+                    _message.value = "Arquivo grande demais para uma watch face (${size / 1024} KB)"
+                    return@launch
+                }
+                val bytes = withContext(Dispatchers.IO) {
+                    app.contentResolver.openInputStream(uri)?.use { input ->
+                        // Lê no máximo MAX_SIZE + 1 bytes para não estourar a memória com um arquivo enorme.
+                        val buffer = java.io.ByteArrayOutputStream()
+                        val chunk = ByteArray(64 * 1024)
+                        var total = 0
+                        while (true) {
+                            val n = input.read(chunk)
+                            if (n < 0) break
+                            total += n
+                            if (total > FaceFile.MAX_SIZE) break
+                            buffer.write(chunk, 0, n)
+                        }
+                        if (total > FaceFile.MAX_SIZE) null else buffer.toByteArray()
+                    }
+                }
+                if (bytes == null) {
+                    _message.value = "Não consegui ler o arquivo (ou ele é grande demais)"
+                    return@launch
+                }
+                val parsed = withContext(Dispatchers.Default) { FaceFile.parse(bytes) }
+                val preview = (parsed as? FaceFile.V2)?.preview?.let { header ->
+                    withContext(Dispatchers.Default) { runCatching { FacePreview.decode(bytes, header) }.getOrNull() }
+                }
+                _selectedFace.value = SelectedFace(name ?: "arquivo", parsed, preview)
+                _install.value = InstallState.Idle
+                when (parsed) {
+                    is FaceFile.V2 -> log.info("Arquivo ${name}: face v2 \"${parsed.name}\" id=${parsed.id}, ${bytes.size} bytes, preview=${parsed.preview?.let { "${it.width}x${it.height}" }}")
+                    is FaceFile.Rejected -> log.warn("Arquivo ${name} recusado: ${parsed.reason}")
+                }
+            } catch (e: Exception) {
+                log.error("Falha ao abrir o arquivo", e)
+                _message.value = "Falha ao abrir o arquivo: ${e.message}"
+            }
+        }
+    }
+
+    private fun describe(uri: Uri): Pair<String?, Long?> {
+        val cursor = getApplication<Application>().contentResolver.query(uri, null, null, null, null) ?: return null to null
+        cursor.use {
+            if (!it.moveToFirst()) return null to null
+            val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            val sizeIndex = it.getColumnIndex(OpenableColumns.SIZE)
+            val name = if (nameIndex >= 0) it.getString(nameIndex) else null
+            val size = if (sizeIndex >= 0 && !it.isNull(sizeIndex)) it.getLong(sizeIndex) else null
+            return name to size
+        }
+    }
+
+    fun installSelected(replaceExisting: Boolean = false) {
+        val face = _selectedFace.value?.parsed as? FaceFile.V2 ?: return
+        if (installJob?.isActive == true) return
+        installJob = viewModelScope.launch {
+            _install.value = InstallState.Running(InstallProgress("Começando…", null))
+            try {
+                watchfaces.install(face, replaceExisting) { _install.value = InstallState.Running(it) }
+                _install.value = InstallState.Done("\"${face.name}\" instalada e ativada.")
+            } catch (e: FaceAlreadyInstalledException) {
+                _install.value = InstallState.AskReplace(e.face)
+            } catch (e: CancellationException) {
+                _install.value = InstallState.Failed("Envio cancelado. A face não foi ativada e a conexão foi fechada.")
+                throw e
+            } catch (e: Exception) {
+                log.error("Instalação falhou", e)
+                _install.value = InstallState.Failed(e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun cancelInstall() {
+        installJob?.cancel()
+    }
+
+    fun dismissInstallResult() {
+        if (installJob?.isActive != true) _install.value = InstallState.Idle
+    }
+
+    fun refreshFaces() = faceAction { watchfaces.refresh() }
+
+    fun activateFace(face: InstalledFace) = faceAction { watchfaces.setActive(face.id) }
+
+    fun deleteFace(face: InstalledFace) = faceAction { watchfaces.delete(face) }
+
+    private fun faceAction(action: suspend () -> Unit) {
+        if (installJob?.isActive == true) {
+            _message.value = "Espere a instalação terminar"
+            return
+        }
+        viewModelScope.launch {
+            try {
+                action()
+            } catch (e: Exception) {
+                _message.value = e.message ?: "Falhou"
+            }
+        }
+    }
 
     private fun createTransport(address: String): BandTransport {
         val a = adapter ?: throw IllegalStateException("Sem Bluetooth")

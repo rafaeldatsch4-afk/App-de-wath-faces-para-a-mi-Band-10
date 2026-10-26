@@ -14,8 +14,12 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 - [x] Log detalhado dos pacotes (aba Logs: copiar/compartilhar)
 - [x] Autenticação com a auth key (handshake miwear-auth, AES-CCM/CTR), chave guardada no Android Keystore
 - [x] Informações da banda (modelo, firmware, bateria)
-- [ ] Envio do arquivo de watch face
-- [ ] Lista de faces instaladas
+- [x] Escolha do arquivo `.face`/`.bin` com validação: cabeçalho v2, ID, nome, resolução do preview (212×520) e checagem estrutural interna
+- [x] Preview da face na tela do app
+- [x] Instalação: pedido 4/4, envio 22/0 em partes com ACK de cada parte, barra de progresso, confirmação pela lista e ativação
+- [x] Tratamento de erros: desconexão, timeout sem ACK, NACK repetido, face já instalada (remove a antiga se você confirmar), banda cheia (10 faces), recusa da banda
+- [x] Cancelamento seguro (entre partes, sem ativar a face, fechando a conexão)
+- [x] Lista das faces instaladas, com ativar e remover
 
 ## Compilar
 
