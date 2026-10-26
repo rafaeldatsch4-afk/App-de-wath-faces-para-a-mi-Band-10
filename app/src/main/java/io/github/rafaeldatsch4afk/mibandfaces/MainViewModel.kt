@@ -23,7 +23,10 @@ import io.github.rafaeldatsch4afk.mibandfaces.face.ArgbImage
 import io.github.rafaeldatsch4afk.mibandfaces.face.FaceFile
 import io.github.rafaeldatsch4afk.mibandfaces.face.FacePreview
 import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKey
+import io.github.rafaeldatsch4afk.mibandfaces.key.AndroidSqliteRows
+import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKeyImporter
 import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKeyStore
+import io.github.rafaeldatsch4afk.mibandfaces.key.KeyCandidate
 import io.github.rafaeldatsch4afk.mibandfaces.log.PacketLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -169,6 +172,47 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Chaves encontradas no último arquivo importado (null = nenhuma importação pendente). */
+    private val _keyCandidates = MutableStateFlow<List<KeyCandidate>?>(null)
+    val keyCandidates: StateFlow<List<KeyCandidate>?> = _keyCandidates.asStateFlow()
+
+    fun importKey(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val (name, _) = withContext(Dispatchers.IO) { describe(uri) }
+                val bytes = withContext(Dispatchers.IO) {
+                    app.contentResolver.openInputStream(uri)?.use { readLimited(it, AuthKeyImporter.MAX_FILE_SIZE) }
+                } ?: run {
+                    _message.value = "Não consegui ler o arquivo (ou ele passa de 64 MB)"
+                    return@launch
+                }
+                val found = withContext(Dispatchers.IO) {
+                    AuthKeyImporter(AndroidSqliteRows(app)).import(name ?: "arquivo", bytes)
+                }
+                log.info("Importação de chave em ${name ?: "arquivo"}: ${found.size} candidata(s)")
+                _keyCandidates.value = found
+                if (found.isEmpty()) _message.value = "Nenhuma chave encontrada nesse arquivo"
+            } catch (e: Exception) {
+                log.error("Falha ao importar a chave", e)
+                _message.value = "Falha ao importar: ${e.message}"
+            }
+        }
+    }
+
+    fun useCandidate(candidate: KeyCandidate) {
+        val error = saveKey(candidate.key)
+        if (error != null) _message.value = error
+        else {
+            _keyCandidates.value = null
+            _message.value = "Chave importada (${candidate.source})"
+        }
+    }
+
+    fun dismissCandidates() {
+        _keyCandidates.value = null
+    }
+
     fun deleteKey() {
         keyStore.clear()
         _savedKey.value = null
@@ -210,20 +254,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
                 val bytes = withContext(Dispatchers.IO) {
-                    app.contentResolver.openInputStream(uri)?.use { input ->
-                        // Lê no máximo MAX_SIZE + 1 bytes para não estourar a memória com um arquivo enorme.
-                        val buffer = java.io.ByteArrayOutputStream()
-                        val chunk = ByteArray(64 * 1024)
-                        var total = 0
-                        while (true) {
-                            val n = input.read(chunk)
-                            if (n < 0) break
-                            total += n
-                            if (total > FaceFile.MAX_SIZE) break
-                            buffer.write(chunk, 0, n)
-                        }
-                        if (total > FaceFile.MAX_SIZE) null else buffer.toByteArray()
-                    }
+                    app.contentResolver.openInputStream(uri)?.use { readLimited(it, FaceFile.MAX_SIZE) }
                 }
                 if (bytes == null) {
                     _message.value = "Não consegui ler o arquivo (ou ele é grande demais)"
@@ -244,6 +275,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _message.value = "Falha ao abrir o arquivo: ${e.message}"
             }
         }
+    }
+
+    /** Lê no máximo [limit] bytes; retorna null se o arquivo for maior, para não estourar a memória. */
+    private fun readLimited(input: java.io.InputStream, limit: Int): ByteArray? {
+        val buffer = java.io.ByteArrayOutputStream()
+        val chunk = ByteArray(64 * 1024)
+        var total = 0L
+        while (true) {
+            val n = input.read(chunk)
+            if (n < 0) break
+            total += n
+            if (total > limit) return null
+            buffer.write(chunk, 0, n)
+        }
+        return buffer.toByteArray()
     }
 
     private fun describe(uri: Uri): Pair<String?, Long?> {

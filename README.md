@@ -13,6 +13,7 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 - [x] Sondagem de versão SPP e sessão SPP V2 com ACK/NACK, reenvio e janela de envio
 - [x] Log detalhado dos pacotes (aba Logs: copiar/compartilhar)
 - [x] Autenticação com a auth key (handshake miwear-auth, AES-CCM/CTR), chave guardada no Android Keystore
+- [x] Importar a chave de arquivo: logs do Mi Fitness (`encryptKey`, `token`, `authKey`, `huamiAuthKey`) ou a pasta do Mi Fitness (`manifest.sqlite` / ZIP) com `registerList_<região>` de **todas** as regiões
 - [x] Informações da banda (modelo, firmware, bateria)
 - [x] Escolha do arquivo `.face`/`.bin` com validação: cabeçalho v2, ID, nome, resolução do preview (212×520) e checagem estrutural interna
 - [x] Preview da face na tela do app
