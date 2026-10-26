@@ -1,5 +1,6 @@
 package io.github.rafaeldatsch4afk.mibandfaces.protocol
 
+import android.annotation.SuppressLint
 import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.IvParameterSpec
@@ -74,6 +75,8 @@ object XiaomiCrypto {
         val l = 15 - nonce.size // bytes do campo de tamanho
         require(l >= 4 || plaintext.size < (1 shl (8 * l))) { "mensagem grande demais para o nonce" }
 
+        // ECB aqui é só a primitiva de bloco do CCM (CBC-MAC + contador), não o modo de cifra.
+        @SuppressLint("GetInstance")
         val aes = Cipher.getInstance("AES/ECB/NoPadding")
         aes.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"))
 

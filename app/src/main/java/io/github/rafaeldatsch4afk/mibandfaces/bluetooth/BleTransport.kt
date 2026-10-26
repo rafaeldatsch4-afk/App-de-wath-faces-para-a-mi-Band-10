@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.content.Context
 import android.os.Build
 import io.github.rafaeldatsch4afk.mibandfaces.log.PacketLog
@@ -91,7 +92,7 @@ class BleTransport(
             }
             val value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
             val ok = if (Build.VERSION.SDK_INT >= 33) {
-                g.writeDescriptor(cccd, value) == BluetoothGatt.GATT_SUCCESS
+                g.writeDescriptor(cccd, value) == BluetoothStatusCodes.SUCCESS
             } else {
                 @Suppress("DEPRECATION")
                 cccd.value = value
@@ -166,7 +167,7 @@ class BleTransport(
         val done = CompletableDeferred<Boolean>()
         pendingWrite = done
         val started = if (Build.VERSION.SDK_INT >= 33) {
-            g.writeCharacteristic(c, chunk, type) == BluetoothGatt.GATT_SUCCESS
+            g.writeCharacteristic(c, chunk, type) == BluetoothStatusCodes.SUCCESS
         } else {
             @Suppress("DEPRECATION")
             c.writeType = type
