@@ -44,6 +44,7 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 
 1. Aba **Chave → Entrar na conta Xiaomi** (deixe a região em *automática*; se não achar nada, escolha a região da conta, ex.: SG ou DE).
 2. Entre com a **mesma conta Xiaomi do Mi Fitness**: escaneie o QR com a câmera de **outro** celular, ou toque em *Abrir a página de login neste celular* e entre pelo navegador. Depois volte para o app.
+   O QR vale por ~5 minutos (o app mostra a contagem). Se a página da Xiaomi disser "QR expirado", toque em **Gerar QR novo** e faça tudo sem demora.
 3. O app mostra as chaves encontradas (a da Mi Band 10 vem primeiro). Toque na que quer usar; ela é salva no Keystore.
 
 Privacidade: a senha só é digitada na página da Xiaomi. O app guarda a sessão apenas na memória durante a busca e a descarta; os tokens nunca vão para o log. Esse é o **único** recurso que usa a internet (permissão `INTERNET`); o envio das faces é todo por Bluetooth.

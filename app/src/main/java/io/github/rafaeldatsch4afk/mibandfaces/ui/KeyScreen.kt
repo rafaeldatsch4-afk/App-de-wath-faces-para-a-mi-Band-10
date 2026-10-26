@@ -39,6 +39,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,6 +61,7 @@ import io.github.rafaeldatsch4afk.mibandfaces.MainViewModel
 import io.github.rafaeldatsch4afk.mibandfaces.cloud.XiaomiCloud
 import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKey
 import io.github.rafaeldatsch4afk.mibandfaces.key.KeyCandidate
+import kotlinx.coroutines.delay
 
 @Composable
 fun KeyScreen(vm: MainViewModel) {
@@ -247,12 +249,24 @@ private fun CloudLoginSection(
                     }
                 }) { Text("Abrir a página de login neste celular") }
             }
+            val secondsLeft by produceState(0L, state.expiresAtMillis) {
+                while (true) {
+                    value = ((state.expiresAtMillis - System.currentTimeMillis()) / 1000).coerceAtLeast(0)
+                    delay(1000)
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(8.dp))
-                Text("Esperando você confirmar o login…", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "Esperando você confirmar o login… QR válido por mais %d:%02d".format(secondsLeft / 60, secondsLeft % 60),
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
-            OutlinedButton(onClick = { vm.cancelCloudLogin() }) { Text("Cancelar") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { vm.startCloudLogin(region) }) { Text("Gerar QR novo") }
+                OutlinedButton(onClick = { vm.cancelCloudLogin() }) { Text("Cancelar") }
+            }
         }
     }
 }

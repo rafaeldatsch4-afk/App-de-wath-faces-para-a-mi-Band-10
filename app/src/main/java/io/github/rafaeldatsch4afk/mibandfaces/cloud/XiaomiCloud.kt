@@ -92,28 +92,59 @@ class XiaomiCloud(
         }
     }
 
-    /** Espera até [waitMs] pelo login. Retorna null enquanto ninguém confirmou. */
-    suspend fun pollQrLogin(start: QrStart, waitMs: Int): QrLogin? {
-        val r = try {
-            http.request("GET", start.longPollUrl, readTimeoutMs = waitMs)
-        } catch (e: HttpTimeoutException) {
-            return null
-        } catch (e: java.io.IOException) {
-            throw CloudException("Falha de rede ao esperar o login: ${e.message}", e)
+    /**
+     * Mantém **uma** espera longa ligada ao QR até o login ser confirmado ou o QR expirar.
+     *
+     * Medido contra a Xiaomi: depois que uma espera é interrompida pelo cliente, as seguintes
+     * respondem 403 por alguns segundos e só então voltam a segurar a conexão. Enquanto não há espera
+     * ligada ao QR, um escaneamento não encontra ninguém esperando e a página da Xiaomi mostra "QR
+     * expirado". Por isso: sem interromper de propósito (o limite de leitura é o fim da validade
+     * do QR) e, se a espera cair ou der erro, pausa de [RETRY_PAUSE_MS] antes de tentar de novo.
+     */
+    suspend fun awaitQrLogin(
+        start: QrStart,
+        now: () -> Long = System::currentTimeMillis,
+        pause: suspend (Long) -> Unit = { kotlinx.coroutines.delay(it) },
+    ): QrLogin {
+        val deadline = now() + start.timeoutSeconds * 1000L
+        var refusals = 0
+        while (true) {
+            val remaining = deadline - now()
+            if (remaining <= 0) throw CloudException("O QR expirou. Comece de novo.")
+            val r = try {
+                http.request("GET", start.longPollUrl, readTimeoutMs = remaining.coerceAtMost(MAX_HOLD_MS).toInt())
+            } catch (e: HttpTimeoutException) {
+                log("Xiaomi: a espera terminou sem login; reconectando")
+                refusals = 0
+                pause(RETRY_PAUSE_MS)
+                continue
+            } catch (e: java.io.IOException) {
+                log("Xiaomi: a espera caiu (${e.javaClass.simpleName}); reconectando em ${RETRY_PAUSE_MS / 1000} s")
+                pause(RETRY_PAUSE_MS)
+                continue
+            }
+            if (r.status != 200) {
+                refusals++
+                log("Xiaomi: a espera respondeu HTTP ${r.status}; nova tentativa em ${RETRY_PAUSE_MS / 1000} s")
+                if (refusals >= MAX_REFUSALS) {
+                    throw CloudException("A Xiaomi continua recusando a espera pelo login (HTTP ${r.status}). Tente de novo daqui a alguns minutos.")
+                }
+                pause(RETRY_PAUSE_MS)
+                continue
+            }
+            val json = parseJson(r.body)
+            if (json == null || json.optString("ssecurity").isEmpty() || json.optString("location").isEmpty()) {
+                throw CloudException("O login na Xiaomi não foi concluído (código ${json?.opt("code") ?: "?"}). Gere um QR novo.")
+            }
+            return QrLogin(
+                userId = json.opt("userId")?.toString().orEmpty(),
+                cUserId = json.opt("cUserId")?.toString().orEmpty(),
+                ssecurity = json.getString("ssecurity"),
+                passToken = json.opt("passToken")?.toString().orEmpty(),
+                location = json.getString("location"),
+                nonce = json.opt("nonce")?.toString(),
+            )
         }
-        if (r.status != 200) return null
-        val json = parseJson(r.body) ?: return null
-        if (json.optString("ssecurity").isEmpty() || json.optString("location").isEmpty()) {
-            throw CloudException("O login na Xiaomi não foi concluído")
-        }
-        return QrLogin(
-            userId = json.opt("userId")?.toString().orEmpty(),
-            cUserId = json.opt("cUserId")?.toString().orEmpty(),
-            ssecurity = json.getString("ssecurity"),
-            passToken = json.opt("passToken")?.toString().orEmpty(),
-            location = json.getString("location"),
-            nonce = json.opt("nonce")?.toString(),
-        )
     }
 
     /** Segue o endereço STS do login e guarda o `serviceToken` que ele entrega. */
@@ -240,6 +271,15 @@ class XiaomiCloud(
         const val HEALTH_SID = "miothealth"
         const val HEALTH_CALLBACK = "https://sts-hlth.io.mi.com/healthapp/sts"
         const val HEALTH_PATH = "/app/v1/source/get_source_list"
+
+        /** Maior tempo de uma espera longa (a validade do QR costuma ser 300 s). */
+        const val MAX_HOLD_MS = 330_000L
+
+        /** Pausa antes de religar a espera: logo depois de uma queda a Xiaomi responde 403 por alguns segundos. */
+        const val RETRY_PAUSE_MS = 4_000L
+
+        /** Respostas diferentes de 200 seguidas antes de desistir. */
+        private const val MAX_REFUSALS = 10
 
         /** Regiões conhecidas (as mesmas do miband-hack). */
         val REGIONS = listOf("sg", "de", "us", "cn", "i2", "ru", "tw", "in")

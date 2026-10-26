@@ -22,7 +22,6 @@ import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.FoundDevice
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.SppTransport
 import io.github.rafaeldatsch4afk.mibandfaces.cloud.CloudDevice
 import io.github.rafaeldatsch4afk.mibandfaces.cloud.CloudException
-import io.github.rafaeldatsch4afk.mibandfaces.cloud.QrLogin
 import io.github.rafaeldatsch4afk.mibandfaces.cloud.UrlConnectionHttp
 import io.github.rafaeldatsch4afk.mibandfaces.cloud.XiaomiCloud
 import io.github.rafaeldatsch4afk.mibandfaces.face.ArgbImage
@@ -227,7 +226,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         data class Working(val step: String) : CloudLoginState
 
         /** Esperando o usuário confirmar o login na página da Xiaomi (QR ou navegador). */
-        class WaitingForLogin(val qrImage: ByteArray?, val loginUrl: String) : CloudLoginState
+        class WaitingForLogin(val qrImage: ByteArray?, val loginUrl: String, val expiresAtMillis: Long) : CloudLoginState
         data class Failed(val message: String) : CloudLoginState
     }
 
@@ -247,14 +246,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val cloud = XiaomiCloud(UrlConnectionHttp(), log = { log.info(it) })
                 _cloudLogin.value = CloudLoginState.Working("Pedindo o código QR à Xiaomi…")
                 val start = cloud.startQrLogin()
-                _cloudLogin.value = CloudLoginState.WaitingForLogin(cloud.downloadQr(start), start.loginUrl)
+                _cloudLogin.value = CloudLoginState.WaitingForLogin(
+                    cloud.downloadQr(start),
+                    start.loginUrl,
+                    System.currentTimeMillis() + start.timeoutSeconds * 1000L,
+                )
 
-                val deadline = System.currentTimeMillis() + start.timeoutSeconds * 1000L
-                var login: QrLogin? = null
-                while (login == null) {
-                    if (System.currentTimeMillis() >= deadline) throw CloudException("O QR expirou. Comece de novo.")
-                    login = cloud.pollQrLogin(start, POLL_WAIT_MS)
-                }
+                val login = cloud.awaitQrLogin(start)
 
                 _cloudLogin.value = CloudLoginState.Working("Entrando no Mi Fitness…")
                 val session = cloud.healthSession(login)
@@ -464,7 +462,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
-        const val POLL_WAIT_MS = 25_000
         const val SCAN_DURATION_MS = 20_000L
     }
 }

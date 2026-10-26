@@ -14,12 +14,12 @@ import java.util.Base64
 
 /** Xiaomi simulada: cada teste decide o que responder a cada requisição. */
 private class FakeCloudHttp(val handler: (method: String, url: String, headers: Map<String, String>, body: String?) -> HttpResponse) : CloudHttp {
-    class Call(val method: String, val url: String, val headers: Map<String, String>, val body: String?, val follow: Boolean)
+    class Call(val method: String, val url: String, val headers: Map<String, String>, val body: String?, val follow: Boolean, val readTimeoutMs: Int = 0)
 
     val calls = mutableListOf<Call>()
 
     override suspend fun request(method: String, url: String, headers: Map<String, String>, body: String?, followRedirects: Boolean, readTimeoutMs: Int): HttpResponse {
-        calls += Call(method, url, headers, body, followRedirects)
+        calls += Call(method, url, headers, body, followRedirects, readTimeoutMs)
         return handler(method, url, headers, body)
     }
 
@@ -82,37 +82,88 @@ class XiaomiCloudTest {
         }
     }
 
+    private val qrStart = QrStart("https://account.xiaomi.com/q", "https://account.xiaomi.com/l", "https://sgp.lp.account.xiaomi.com/lp/s?k=1", 300)
+
+    /** Relógio virtual: cada pausa avança o tempo, sem esperar de verdade. */
+    private class VirtualTime {
+        var t = 0L
+        val pauses = mutableListOf<Long>()
+        val now: () -> Long = { t }
+        val pause: suspend (Long) -> Unit = { pauses += it; t += it }
+    }
+
+    private val loginBody =
+        """&&&START&&&{"userId":1,"cUserId":"c","ssecurity":"$ssecurity","passToken":"p","location":"https://sts-hlth.io.mi.com/healthapp/sts?x=1","nonce":5}"""
+
     @Test
-    fun pollReturnsNullWhilePendingAndParsesTheLogin() = runBlocking {
-        val start = QrStart("https://account.xiaomi.com/q", "https://account.xiaomi.com/l", "https://sgp.lp.account.xiaomi.com/lp/s?k=1", 300)
-        var answer: () -> HttpResponse = { throw HttpTimeoutException("espera") }
-        val http = FakeCloudHttp { _, _, _, _ -> answer() }
-        val cloud = XiaomiCloud(http)
-        assertNull(cloud.pollQrLogin(start, 1000))
-
-        answer = { ok("", status = 408) }
-        assertNull(cloud.pollQrLogin(start, 1000))
-
-        answer = {
-            ok("""&&&START&&&{"userId":1,"cUserId":"c","ssecurity":"$ssecurity","passToken":"p","location":"https://sts-hlth.io.mi.com/healthapp/sts?x=1","nonce":5}""")
-        }
-        val login = cloud.pollQrLogin(start, 1000)!!
+    fun awaitHoldsOneLongPollUntilTheQrExpires() = runBlocking {
+        val http = FakeCloudHttp { _, _, _, _ -> ok(loginBody) }
+        val login = XiaomiCloud(http).awaitQrLogin(qrStart)
+        // Sem interromper de propósito: o limite de leitura vai até o fim da validade do QR.
+        assertEquals(1, http.calls.size)
+        assertEquals(300_000, http.calls.single().readTimeoutMs)
         assertEquals("1", login.userId)
-        assertEquals("c", login.cUserId)
         assertEquals("5", login.nonce)
         assertEquals("https://sts-hlth.io.mi.com/healthapp/sts?x=1", login.location)
         assertEquals("QrLogin(<redacted>)", login.toString())
     }
 
     @Test
-    fun pollNetworkFailureBecomesFriendlyError() = runBlocking {
-        val start = QrStart("https://account.xiaomi.com/q", "", "https://sgp.lp.account.xiaomi.com/lp/s?k=1", 300)
-        val http = FakeCloudHttp { _, _, _, _ -> throw IOException("sem rede") }
+    fun awaitPausesBeforeReconnectingAfterRefusalsDropsAndTimeouts() = runBlocking {
+        val clock = VirtualTime()
+        val answers = ArrayDeque<() -> HttpResponse>(
+            listOf(
+                { throw java.io.IOException("rede caiu") },
+                { ok("<html>403</html>", status = 403) },
+                { ok("<html>403</html>", status = 403) },
+                { throw HttpTimeoutException("espera") },
+                { ok(loginBody) },
+            ),
+        )
+        val http = FakeCloudHttp { _, _, _, _ -> answers.removeFirst()() }
+        XiaomiCloud(http).awaitQrLogin(qrStart, clock.now, clock.pause)
+        assertEquals(5, http.calls.size)
+        // Nunca religa na hora: sempre 4 s de pausa depois de uma queda, recusa ou fim de espera.
+        assertEquals(List(4) { XiaomiCloud.RETRY_PAUSE_MS }, clock.pauses)
+        // O limite de leitura diminui junto com a validade restante do QR.
+        assertEquals(300_000, http.calls[0].readTimeoutMs)
+        assertEquals(284_000, http.calls[4].readTimeoutMs)
+    }
+
+    @Test
+    fun awaitGivesUpWhenXiaomiKeepsRefusing() = runBlocking {
+        val clock = VirtualTime()
+        val http = FakeCloudHttp { _, _, _, _ -> ok("403", status = 403) }
         try {
-            XiaomiCloud(http).pollQrLogin(start, 1000)
+            XiaomiCloud(http).awaitQrLogin(qrStart, clock.now, clock.pause)
             fail()
         } catch (e: CloudException) {
-            assertTrue(e.message!!.contains("rede"))
+            assertTrue(e.message!!.contains("403"))
+        }
+        assertEquals(10, http.calls.size)
+    }
+
+    @Test
+    fun awaitReportsExpiredQr() = runBlocking {
+        val clock = VirtualTime()
+        val http = FakeCloudHttp { _, _, _, _ -> throw HttpTimeoutException("espera") }
+        try {
+            XiaomiCloud(http).awaitQrLogin(qrStart, clock.now, clock.pause)
+            fail()
+        } catch (e: CloudException) {
+            assertTrue(e.message!!.contains("expirou"))
+        }
+        assertTrue(clock.t >= 300_000)
+    }
+
+    @Test
+    fun awaitFailsWhenAnswerHasNoSession() = runBlocking {
+        val http = FakeCloudHttp { _, _, _, _ -> ok("""&&&START&&&{"code":70016,"desc":"x"}""") }
+        try {
+            XiaomiCloud(http).awaitQrLogin(qrStart)
+            fail()
+        } catch (e: CloudException) {
+            assertTrue(e.message!!.contains("70016"))
         }
     }
 
