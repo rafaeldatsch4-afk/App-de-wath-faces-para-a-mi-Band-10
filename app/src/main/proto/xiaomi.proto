@@ -1,0 +1,168 @@
+// Subconjunto das mensagens protobuf da Xiaomi usadas por este app.
+//
+// Adaptado do Gadgetbridge (GBProtobufGenerator/src/main/proto/xiaomi.proto e
+// xiaomi/wear_*.proto), licença AGPL-3.0:
+//   https://codeberg.org/Freeyourgadget/Gadgetbridge
+// Os números dos campos são exatamente os do Gadgetbridge. Só foram mantidas as mensagens de
+// autenticação, sistema (bateria e informações), watch face e envio de dados.
+
+// proto2 é obrigatório: precisamos serializar valores padrão (ex.: CompanionDevice.unknown1 = 0).
+syntax = "proto2";
+
+package xiaomi;
+
+option java_package = "io.github.rafaeldatsch4afk.mibandfaces.proto";
+option java_multiple_files = true;
+
+message Command {
+  required uint32 type = 1;
+  optional uint32 subtype = 2;
+
+  optional Account auth = 3;
+  optional System system = 4;
+  optional Watchface watchface = 6;
+
+  // tipo 22
+  optional DataUpload dataUpload = 24;
+
+  optional uint32 status = 100; // 0 em caso de sucesso em alguns comandos
+}
+
+// ---------------------------------------------------------------- autenticação (tipo 1) ---
+
+message Account {
+  // Campo 3: código de erro da conta. Não existe no proto do Gadgetbridge; o nome e os valores
+  // vêm do schema do AstroBox-NG, documentado no miband-hack (docs/protocol.md, seção 4.1).
+  // Uma Mi Band 10 respondeu "0801101a1a021804" (= errorCode 4, NO_BOUND) numa captura real.
+  optional uint32 errorCode = 3;
+
+  optional string userId = 7;
+  optional uint32 status = 8;
+  // 1, 26
+  optional Auth.AppVerify appVerify = 30;
+  optional Auth.DeviceVerify deviceVerify = 31;
+  // 1, 27
+  optional Auth.AppConfirm appConfirm = 32;
+  optional Auth.DeviceConfirm authStep4 = 33;
+}
+
+message CompanionDevice {
+  required uint32 unknown1 = 1; // tipo do aparelho: 0 = Android (precisa ser serializado)
+  required float phoneApiLevel = 2;
+  required string phoneName = 3; // modelo do celular
+  required uint32 unknown3 = 4; // 224
+  required string region = 5; // 2 letras, maiúsculas
+}
+
+message Auth {
+  message AppVerify {
+    required bytes nonce = 1;
+    optional string deviceId = 2;
+    optional bool check_dynamic_code = 3;
+  }
+
+  message DeviceVerify {
+    required bytes nonce = 1;
+    required bytes hmac = 2;
+  }
+
+  message AppConfirm {
+    required bytes encryptedNonces = 1;
+    required bytes encryptedDeviceInfo = 2; // CompanionDevice cifrado
+  }
+
+  message DeviceConfirm {
+    required bool unknown1 = 1;
+    optional uint32 device_capability = 2;
+    optional uint32 device_capability_2 = 3;
+  }
+}
+
+// ---------------------------------------------------------------------- sistema (tipo 2) ---
+
+message System {
+  // 2, 1
+  optional Power power = 2;
+  // 2, 2
+  optional DeviceInfo deviceInfo = 3;
+}
+
+message Power {
+  optional Battery battery = 1;
+}
+
+message Battery {
+  optional uint32 level = 1;
+  optional uint32 state = 2;
+}
+
+message DeviceInfo {
+  // No Gadgetbridge estes campos são "required"; aqui ficam opcionais para que uma resposta
+  // incompleta não derrube o parse da mensagem inteira.
+  optional string serialNumber = 1;
+  optional string firmware = 2;
+  optional string unknown3 = 3;
+  optional string model = 4;
+}
+
+// ----------------------------------------------------------------- watch face (tipo 4) ---
+
+message Watchface {
+  optional WatchfaceList watchfaceList = 1;
+
+  // 4, 2 remover | 4, 1 ativar
+  optional string watchfaceId = 2;
+  optional uint32 ack = 4; // 1
+
+  // 4, 4
+  optional uint32 installStatus = 5; // 0 = não instalada (pode enviar), 2 = já instalada
+  optional WatchfaceInstallStart watchfaceInstallStart = 6;
+  optional WatchfaceInstallFinish watchfaceInstallFinish = 7;
+}
+
+message WatchfaceList {
+  repeated WatchfaceInfo watchface = 1;
+}
+
+message WatchfaceInfo {
+  optional string id = 1;
+  optional string name = 2;
+  optional bool active = 3;
+  optional bool canDelete = 4;
+  optional uint32 unknown5 = 5;
+  optional uint32 unknown6 = 6;
+  optional uint32 unknown11 = 11;
+}
+
+message WatchfaceInstallStart {
+  optional string id = 1;
+  optional uint32 size = 2;
+}
+
+message WatchfaceInstallFinish {
+  optional string id = 1;
+  optional uint32 unknown2 = 2;
+  optional uint32 unknown3 = 3;
+  optional uint32 unknown4 = 4;
+}
+
+// --------------------------------------------------------------- envio de dados (tipo 22) ---
+
+message DataUpload {
+  // 22, 0
+  optional DataUploadRequest dataUploadRequest = 1;
+  optional DataUploadAck dataUploadAck = 2;
+}
+
+message DataUploadRequest {
+  optional uint32 type = 1; // 16 = watch face
+  optional bytes md5sum = 2;
+  optional uint32 size = 3;
+}
+
+message DataUploadAck {
+  optional bytes md5sum = 1;
+  optional uint32 errno = 2; // 0 = pronto para receber; outro valor = erro
+  optional uint32 resumePosition = 4;
+  optional uint32 chunkSize = 5; // ausente em algumas bandas: usar 2048
+}
