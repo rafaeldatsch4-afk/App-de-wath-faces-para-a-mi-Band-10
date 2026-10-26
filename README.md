@@ -14,6 +14,7 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 - [x] Autenticação com a auth key (handshake miwear-auth, AES-CCM/CTR)
 - [x] Chave digitada (32 hex, aceita `0x`) ou importada de arquivo, guardada cifrada com o **Android Keystore**
 - [x] Importar a chave de arquivo: logs do Mi Fitness (`encryptKey`, `token`, `authKey`, `huamiAuthKey`) ou a pasta do Mi Fitness (`manifest.sqlite` / ZIP) com `registerList_<região>` de **todas** as regiões
+- [x] Acerto da hora da banda logo depois de autenticar (data, hora, fuso e formato 12/24 h do celular)
 - [x] Informações da banda (modelo, firmware, bateria)
 - [x] Escolha do arquivo `.face`/`.bin` com validação: cabeçalho v2, ID, nome, resolução do preview (212×520) e checagem estrutural interna
 - [x] Preview da face na proporção da tela da banda
@@ -49,7 +50,7 @@ Requisitos: JDK 17+ e Android SDK (plataforma 36).
 
 ```bash
 ./gradlew assembleDebug        # APK em app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest    # 52 testes unitários (protocolo, cripto, arquivo .face, instalação)
+./gradlew testDebugUnitTest    # 53 testes unitários (protocolo, cripto, arquivo .face, instalação)
 ./gradlew lintDebug
 ```
 
@@ -80,7 +81,6 @@ Detalhes em [docs/PROTOCOLO.md](docs/PROTOCOLO.md#8-o-que-não-está-confirmado-
 - **Limite de 10 faces:** vem da especificação do app, não do Gadgetbridge nem do miband-hack.
 - **Tamanho das partes:** segue o Gadgetbridge (`chunkSize − 4`); o miband-hack desconta 2 bytes a mais no SPP.
 - **Janela de envio:** 1 quadro por vez (cada parte espera o ACK da anterior), como pedido. É mais lento que a janela anunciada pela banda, mas mais conservador. Ajustável em `LinkConfig.maxWindow`.
-- **Hora:** o Gadgetbridge acerta a hora da banda depois de autenticar; este app não envia a hora.
 - **NO_BOUND:** uma Mi Band 10 vinculada a um iPhone recusou outro aparelho com `NO_BOUND` (captura do miband-hack). Se isso acontecer, vincule a banda pelo Mi Fitness **neste** celular e use a chave nova.
 
 ## Riscos

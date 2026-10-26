@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothManager
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
+import android.text.format.DateFormat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.rafaeldatsch4afk.mibandfaces.band.BandClient
@@ -55,6 +56,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // Mesmo critério do Gadgetbridge: as duas letras do idioma, em maiúsculas.
             region = Locale.getDefault().language.take(2).uppercase(Locale.ROOT).ifEmpty { "EN" },
         ),
+        is24HourFormat = { DateFormat.is24HourFormat(app) },
     )
     private val keyStore = AuthKeyStore(app)
     val watchfaces = WatchfaceManager(client, log)

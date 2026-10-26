@@ -4,7 +4,7 @@
 // xiaomi/wear_*.proto), licença AGPL-3.0:
 //   https://codeberg.org/Freeyourgadget/Gadgetbridge
 // Os números dos campos são exatamente os do Gadgetbridge. Só foram mantidas as mensagens de
-// autenticação, sistema (bateria e informações), watch face e envio de dados.
+// autenticação, sistema (bateria, informações e hora), watch face e envio de dados.
 
 // proto2 é obrigatório: precisamos serializar valores padrão (ex.: CompanionDevice.unknown1 = 0).
 syntax = "proto2";
@@ -85,6 +85,8 @@ message System {
   optional Power power = 2;
   // 2, 2
   optional DeviceInfo deviceInfo = 3;
+  // 2, 3
+  optional Clock clock = 4;
 }
 
 message Power {
@@ -103,6 +105,34 @@ message DeviceInfo {
   optional string firmware = 2;
   optional string unknown3 = 3;
   optional string model = 4;
+}
+
+// Hora (XiaomiSystem.Clock e wear_common.proto no Gadgetbridge).
+message Clock {
+  required Date date = 1;
+  required Time time = 2;
+  required TimeZone timezone = 3;
+  optional bool isNot24hour = 4;
+}
+
+message Date {
+  required uint32 year = 1;
+  required uint32 month = 2;
+  required uint32 day = 3;
+}
+
+message Time {
+  required uint32 hour = 1;
+  required uint32 minute = 2;
+  optional uint32 second = 3;
+  optional uint32 millisecond = 4;
+}
+
+message TimeZone {
+  // deslocamentos em blocos de 15 minutos
+  optional sint32 zoneOffset = 1;
+  optional sint32 dstOffset = 2;
+  required string name = 3;
 }
 
 // ----------------------------------------------------------------- watch face (tipo 4) ---

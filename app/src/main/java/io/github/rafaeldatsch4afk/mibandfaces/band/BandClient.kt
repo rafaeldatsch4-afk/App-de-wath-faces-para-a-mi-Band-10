@@ -5,6 +5,7 @@ import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BandTransport
 import io.github.rafaeldatsch4afk.mibandfaces.log.PacketLog
 import io.github.rafaeldatsch4afk.mibandfaces.proto.Command
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.LinkConfig
+import io.github.rafaeldatsch4afk.mibandfaces.protocol.LinkException
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.SppV2
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.SppV2Cipher
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.XiaomiCrypto
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeout
 import java.security.SecureRandom
+import java.util.Calendar
 import java.util.concurrent.CopyOnWriteArrayList
 
 /** Estado da conexão, mostrado na tela de conexão. */
@@ -50,6 +52,9 @@ class BandClient(
     private val companion: CompanionInfo,
     private val linkConfig: LinkConfig = LinkConfig(),
     private val requestTimeoutMs: Long = 10_000,
+    /** Se o celular usa formato 24 h (a banda segue a mesma preferência). */
+    private val is24HourFormat: () -> Boolean = { true },
+    private val clock: () -> Calendar = XiaomiClock::now,
 ) {
     private class Waiter(val match: (Command) -> Boolean, val reply: CompletableDeferred<Command>)
 
@@ -79,6 +84,10 @@ class BandClient(
             newLink.open(LinkListener(newLink))
             _state.value = BandState.Connecting("Autenticando…")
             authenticate(newLink, authKey)
+            // Como o Gadgetbridge (XiaomiSupport.onAuthSuccess): acerta a hora logo depois de autenticar.
+            // Antes de anunciar Ready, para que nenhum outro comando passe na frente.
+            syncTime()
+            if (link !== newLink || !newLink.isOpen) throw NotConnectedException()
             _state.value = BandState.Ready(transport.description)
             log.info("Pronto: autenticado por ${transport.description}")
         } catch (e: Exception) {
@@ -124,6 +133,27 @@ class BandClient(
             throw AuthException("A banda recusou a confirmação (código ${step2.auth.errorCode}): ${XiaomiAuth.describeAccountError(step2.auth.errorCode)}")
         }
         l.cipher = SppV2Cipher(keys)
+    }
+
+    /**
+     * Envia a hora, a data, o fuso e o formato 12/24 h do celular (comando 2/3). O Gadgetbridge não
+     * espera resposta, só o ACK de transporte. Uma falha aqui é registrada, mas não derruba a conexão.
+     */
+    suspend fun syncTime() {
+        try {
+            val now = clock()
+            send(XiaomiClock.buildSetTimeCommand(now, is24HourFormat()))
+            log.info(
+                "Hora acertada: %tF %<tT (%s, %s)".format(now, now.timeZone.id, if (is24HourFormat()) "24 h" else "12 h"),
+            )
+        } catch (e: NotConnectedException) {
+            throw e
+        } catch (e: LinkException) {
+            // O enlace caiu ou parou de receber ACKs: isso sim é fatal para a conexão.
+            throw e
+        } catch (e: Exception) {
+            log.warn("Não consegui acertar a hora da banda: ${e.message}")
+        }
     }
 
     /** Pede modelo, firmware e bateria. Falhas aqui não derrubam a conexão. */

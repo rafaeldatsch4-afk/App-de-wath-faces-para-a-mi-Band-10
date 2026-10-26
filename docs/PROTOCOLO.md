@@ -49,6 +49,7 @@ Comandos protobuf `Command{type, subtype, ...}`; autenticação é `type = 1`. A
    - `encryptedNonces = HMAC-SHA256(encKey, nonceCelular ‖ nonceBanda)`
    - `encryptedDeviceInfo = AES-128-CCM(encKey, nonce = encNonce ‖ 00000000 ‖ 00000000, tag 4 bytes)` do protobuf `CompanionDevice{0, nível de API, modelo do celular, 224, região}`.
 6. Banda responde `subtype 27`: autenticado.
+7. O Gadgetbridge acerta a hora logo em seguida (`XiaomiSystemService.setCurrentTime`): comando `2/3` com `system.clock{date, time{hora, minuto, segundo, ms}, timezone{zoneOffset e dstOffset em blocos de 15 min, nome do fuso}, isNot24hour}`, sem esperar resposta. Este app faz o mesmo.
 
 Depois disso, no SPP V2, os comandos protobuf vão cifrados com **AES-128-CTR, IV = a própria chave** (`encKey` para enviar, `decKey` para receber), contador reiniciado a cada pacote (sim, é isso mesmo: `encryptV2`/`decryptV2`). O canal de dados (upload) não é cifrado.
 
@@ -91,4 +92,4 @@ A chave (32 caracteres hex) é criada quando a banda é vinculada à conta Xiaom
 - **Limite de 10 faces:** não aparece no Gadgetbridge nem no miband-hack; o app usa o valor informado por você.
 - **Tamanho das partes do upload:** o Gadgetbridge usa `chunkSize − 4`; o miband-hack desconta mais 2 bytes no SPP (citando o AstroBox). O app segue o Gadgetbridge.
 - **Cancelamento:** não existe comando de "abortar upload" no código de referência. O cancelamento do app para de enviar entre duas partes (nunca no meio de um quadro), não ativa a face e fecha a conexão. Como o MD5 e o CRC32 do arquivo inteiro vão no início e no fim, um envio incompleto não deveria ser instalado, mas isso não está confirmado.
-- **Sincronização de hora:** o Gadgetbridge acerta a hora depois de autenticar; o miband-hack observa que a banda pode desconectar sem isso. Este app ainda não envia a hora.
+- **Sincronização de hora:** o miband-hack observa que a banda pode desconectar sem ela, mas não confirmou. O app envia a hora como o Gadgetbridge (passo 7 da autenticação).

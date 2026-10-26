@@ -39,6 +39,36 @@ class BandClientAuthTest {
     }
 
     @Test
+    fun syncsTimeRightAfterAuthentication() = runBlocking {
+        val band = FakeBand(key)
+        val fixed = java.util.GregorianCalendar(java.util.TimeZone.getTimeZone("America/Sao_Paulo")).apply {
+            set(2026, java.util.Calendar.OCTOBER, 26, 14, 5, 9)
+            set(java.util.Calendar.MILLISECOND, 321)
+        }
+        val client = BandClient(PacketLog(), companion, config, requestTimeoutMs = 2_000, is24HourFormat = { false }, clock = { fixed })
+        client.connect(band.transport, key)
+        // O primeiro comando depois da autenticação (tipo 1) é o acerto de hora 2/3.
+        val afterAuth = band.commandsReceived.filter { it.type != XiaomiAuth.COMMAND_TYPE }
+        val clockCommand = afterAuth.first()
+        assertEquals(Commands.SYSTEM, clockCommand.type)
+        assertEquals(Commands.SYSTEM_CLOCK, clockCommand.subtype)
+        val clock = clockCommand.system.clock
+        assertEquals(2026, clock.date.year)
+        assertEquals(10, clock.date.month)
+        assertEquals(26, clock.date.day)
+        assertEquals(14, clock.time.hour)
+        assertEquals(5, clock.time.minute)
+        assertEquals(9, clock.time.second)
+        assertEquals(321, clock.time.millisecond)
+        assertEquals(-12, clock.timezone.zoneOffset) // UTC−3 em blocos de 15 min
+        assertEquals(0, clock.timezone.dstOffset)
+        assertEquals("America/Sao_Paulo", clock.timezone.name)
+        assertTrue(clock.isNot24Hour)
+        assertTrue(client.state.value is BandState.Ready)
+        client.disconnect()
+    }
+
+    @Test
     fun wrongKeyIsDetectedByHmac() = runBlocking {
         val band = FakeBand(key)
         val client = client()

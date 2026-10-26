@@ -8,6 +8,7 @@ object Commands {
     const val SYSTEM = 2
     const val SYSTEM_BATTERY = 1
     const val SYSTEM_DEVICE_INFO = 2
+    const val SYSTEM_CLOCK = 3
 
     // XiaomiWatchfaceService
     const val WATCHFACE = 4
