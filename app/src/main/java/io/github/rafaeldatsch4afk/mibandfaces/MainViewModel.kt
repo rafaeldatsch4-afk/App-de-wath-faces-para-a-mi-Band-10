@@ -20,6 +20,11 @@ import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BandTransport
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BleTransport
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.FoundDevice
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.SppTransport
+import io.github.rafaeldatsch4afk.mibandfaces.cloud.CloudDevice
+import io.github.rafaeldatsch4afk.mibandfaces.cloud.CloudException
+import io.github.rafaeldatsch4afk.mibandfaces.cloud.QrLogin
+import io.github.rafaeldatsch4afk.mibandfaces.cloud.UrlConnectionHttp
+import io.github.rafaeldatsch4afk.mibandfaces.cloud.XiaomiCloud
 import io.github.rafaeldatsch4afk.mibandfaces.face.ArgbImage
 import io.github.rafaeldatsch4afk.mibandfaces.face.FaceFile
 import io.github.rafaeldatsch4afk.mibandfaces.face.FacePreview
@@ -215,6 +220,86 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _keyCandidates.value = null
     }
 
+    // ------------------------------------------------------ login na conta Xiaomi ---
+
+    sealed interface CloudLoginState {
+        data object Idle : CloudLoginState
+        data class Working(val step: String) : CloudLoginState
+
+        /** Esperando o usuário confirmar o login na página da Xiaomi (QR ou navegador). */
+        class WaitingForLogin(val qrImage: ByteArray?, val loginUrl: String) : CloudLoginState
+        data class Failed(val message: String) : CloudLoginState
+    }
+
+    private val _cloudLogin = MutableStateFlow<CloudLoginState>(CloudLoginState.Idle)
+    val cloudLogin: StateFlow<CloudLoginState> = _cloudLogin.asStateFlow()
+    private var cloudJob: Job? = null
+
+    /**
+     * Busca a auth key na conta Xiaomi: o usuário confirma o login na página da Xiaomi (o app não
+     * vê a senha), o app lê a lista de aparelhos do Mi Fitness e mostra as chaves encontradas.
+     * [region] null = detectar sozinho. A sessão fica só na memória, dentro desta função.
+     */
+    fun startCloudLogin(region: String?) {
+        cloudJob?.cancel()
+        cloudJob = viewModelScope.launch {
+            try {
+                val cloud = XiaomiCloud(UrlConnectionHttp(), log = { log.info(it) })
+                _cloudLogin.value = CloudLoginState.Working("Pedindo o código QR à Xiaomi…")
+                val start = cloud.startQrLogin()
+                _cloudLogin.value = CloudLoginState.WaitingForLogin(cloud.downloadQr(start), start.loginUrl)
+
+                val deadline = System.currentTimeMillis() + start.timeoutSeconds * 1000L
+                var login: QrLogin? = null
+                while (login == null) {
+                    if (System.currentTimeMillis() >= deadline) throw CloudException("O QR expirou. Comece de novo.")
+                    login = cloud.pollQrLogin(start, POLL_WAIT_MS)
+                }
+
+                _cloudLogin.value = CloudLoginState.Working("Entrando no Mi Fitness…")
+                val session = cloud.healthSession(login)
+                _cloudLogin.value = CloudLoginState.Working("Lendo os aparelhos da conta…")
+                val result = cloud.listFitnessDevices(session, region)
+                if (!result.ok) {
+                    throw CloudException("A Xiaomi recusou a leitura dos aparelhos. Veja os detalhes na aba Logs e tente outra região.")
+                }
+                val withKey = result.devices.filter { it.key != null }
+                if (withKey.isEmpty()) {
+                    val names = result.devices.joinToString { it.name.ifBlank { it.model } }
+                    throw CloudException(
+                        if (result.devices.isEmpty()) "Nenhum aparelho do Mi Fitness nesta conta/região. Tente escolher a região da conta."
+                        else "A conta lista aparelhos ($names), mas nenhum veio com chave.",
+                    )
+                }
+                // Mi Band 10 primeiro; depois os campos mais confiáveis.
+                val ordered = withKey.sortedWith(
+                    compareByDescending<CloudDevice> { "band 10" in it.name.lowercase() }
+                        .thenByDescending { it.keyField != "token" },
+                )
+                _keyCandidates.value = ordered.map {
+                    KeyCandidate(
+                        key = it.key!!,
+                        source = "Conta Xiaomi: ${it.name.ifBlank { it.model }} (${it.keyField}, ${it.host})",
+                        recommended = it.keyField != "token",
+                    )
+                }
+                log.info("Conta Xiaomi: ${withKey.size} chave(s) encontrada(s)")
+                _cloudLogin.value = CloudLoginState.Idle
+            } catch (e: CancellationException) {
+                _cloudLogin.value = CloudLoginState.Idle
+                throw e
+            } catch (e: Exception) {
+                log.error("Login na conta Xiaomi falhou", e)
+                _cloudLogin.value = CloudLoginState.Failed(e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun cancelCloudLogin() {
+        cloudJob?.cancel()
+        _cloudLogin.value = CloudLoginState.Idle
+    }
+
     fun deleteKey() {
         keyStore.clear()
         _savedKey.value = null
@@ -379,6 +464,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
+        const val POLL_WAIT_MS = 25_000
         const val SCAN_DURATION_MS = 20_000L
     }
 }

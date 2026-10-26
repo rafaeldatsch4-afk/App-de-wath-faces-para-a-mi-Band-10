@@ -78,4 +78,6 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.bouncycastle)
+    // O org.json do Android não existe na JVM dos testes unitários.
+    testImplementation(libs.org.json)
 }

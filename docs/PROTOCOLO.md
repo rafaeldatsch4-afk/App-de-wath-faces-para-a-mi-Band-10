@@ -63,6 +63,18 @@ A chave (32 caracteres hex) é criada quando a banda é vinculada à conta Xiaom
 - **Pasta do Mi Fitness no iPhone/iPad:** `MHWCahe/<uid>/VirtualDevice_registerList/manifest.sqlite`, tabela `manifest`, linhas `registerList_<região>` (ex.: `registerList_de`, `registerList_sg`), cada uma com uma plist que contém `encryptKey`. É preciso olhar **todas** as regiões.
 - Não desvincular a banda no Mi Fitness (invalida a chave). Reset de fábrica também gera chave nova.
 
+### Buscar a chave na conta Xiaomi (nuvem)
+
+Portado de `worker/xiaomi-cloud.ts` do miband-hack (que cita Xiaomi-cloud-tokens-extractor, ha_miband e huami-token). Não faz parte do protocolo da banda, é só para obter a auth key:
+
+1. `GET https://account.xiaomi.com/longPolling/loginUrl?sid=miothealth&callback=https://sts-hlth.io.mi.com/healthapp/sts&…` devolve `qr` (imagem), `loginUrl` (a mesma página, para abrir no navegador) e `lp` (espera longa).
+2. O usuário confirma o login na página da Xiaomi (a senha nunca passa pelo app). A espera longa responde com `userId`, `cUserId`, `ssecurity`, `passToken`, `location` e `nonce`.
+3. `location` (STS) é aberto para receber o cookie `serviceToken` (primeiro simples, depois com `clientSign = base64(SHA1("nonce=<nonce>&<ssecurity>"))`).
+4. `POST <região>.hlth.io.mi.com/app/v1/source/get_source_list` com `{"page_size":50,"status":1}`, assinado e cifrado com RC4 (descartando 1024 bytes) a partir de `SHA256(ssecurity ‖ nonce)`; há duas codificações (estilo Mi Home e fluxo único do huami-token). A resposta vem cifrada igual.
+5. Cada aparelho traz a chave em `detail.encrypt_key` (ou `auth_key`, `token`). Chaves de 32 hex são ofertadas; `beaconkey` nunca.
+
+Não confirmado com conta real (o miband-hack avisa o mesmo).
+
 ## 5. Watch faces (`XiaomiWatchfaceService`, `type = 4`)
 
 | Subtipo | Comando |

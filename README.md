@@ -13,6 +13,7 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 - [x] Sondagem de versão SPP e sessão SPP V2 com ACK/NACK, reenvio por timeout e janela de envio
 - [x] Autenticação com a auth key (handshake miwear-auth, AES-CCM/CTR)
 - [x] Chave digitada (32 hex, aceita `0x`) ou importada de arquivo, guardada cifrada com o **Android Keystore**
+- [x] **Buscar a chave na conta Xiaomi**: login na página da própria Xiaomi (QR code ou navegador do celular; o app nunca vê a senha), leitura dos aparelhos do Mi Fitness e escolha da chave. **Ainda não confirmado com uma conta real**
 - [x] Importar a chave de arquivo: logs do Mi Fitness (`encryptKey`, `token`, `authKey`, `huamiAuthKey`) ou a pasta do Mi Fitness (`manifest.sqlite` / ZIP) com `registerList_<região>` de **todas** as regiões
 - [x] Acerto da hora da banda logo depois de autenticar (data, hora, fuso e formato 12/24 h do celular)
 - [x] Informações da banda (modelo, firmware, bateria)
@@ -33,11 +34,19 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 ## Como usar
 
 1. **Vincule a banda no Mi Fitness** (uma vez) e obtenha a auth key. Não desvincule depois: isso invalida a chave.
-2. Na aba **Chave**, digite a chave ou toque em *Importar de um arquivo* (log do Mi Fitness, `manifest.sqlite` ou ZIP da pasta do Mi Fitness). Se aparecerem várias candidatas, comece pelas marcadas como "campo conhecido".
+2. Na aba **Chave**, toque em *Entrar na conta Xiaomi* (veja abaixo), ou digite a chave, ou toque em *Importar de um arquivo* (log do Mi Fitness, `manifest.sqlite` ou ZIP da pasta do Mi Fitness). Se aparecerem várias candidatas, comece pelas marcadas como "campo conhecido".
 3. Feche o Mi Fitness (ou tire a permissão de Bluetooth dele), para ele não disputar a conexão.
 4. Na aba **Conexão**: *Buscar* → toque na sua banda → *Parear* (confirme na banda) → *Conectar*. O status deve chegar a "Conectado e autenticado".
 5. Na aba **Instalar**: *Escolher arquivo*, confira a validação e o preview, marque "Entendo os riscos" e toque em *Instalar na banda*. Deixe o app aberto até terminar.
 6. Na aba **Faces**: veja as faces instaladas, ative ou remova.
+
+### Buscar a chave na conta Xiaomi
+
+1. Aba **Chave → Entrar na conta Xiaomi** (deixe a região em *automática*; se não achar nada, escolha a região da conta, ex.: SG ou DE).
+2. Entre com a **mesma conta Xiaomi do Mi Fitness**: escaneie o QR com a câmera de **outro** celular, ou toque em *Abrir a página de login neste celular* e entre pelo navegador. Depois volte para o app.
+3. O app mostra as chaves encontradas (a da Mi Band 10 vem primeiro). Toque na que quer usar; ela é salva no Keystore.
+
+Privacidade: a senha só é digitada na página da Xiaomi. O app guarda a sessão apenas na memória durante a busca e a descarta; os tokens nunca vão para o log. Esse é o **único** recurso que usa a internet (permissão `INTERNET`); o envio das faces é todo por Bluetooth.
 
 ### Onde fica a chave
 
@@ -50,7 +59,7 @@ Requisitos: JDK 17+ e Android SDK (plataforma 36).
 
 ```bash
 ./gradlew assembleDebug        # APK em app/build/outputs/apk/debug/app-debug.apk
-./gradlew testDebugUnitTest    # 53 testes unitários (protocolo, cripto, arquivo .face, instalação)
+./gradlew testDebugUnitTest    # testes unitários (protocolo, cripto, arquivo .face, instalação, conta Xiaomi)
 ./gradlew lintDebug
 ```
 
@@ -68,6 +77,7 @@ app/src/main/
     band/                      cliente da banda (comandos protobuf, autenticação), watch faces e envio em partes
     face/                      leitura/validação do .face, checagem estrutural, decodificação do preview
     key/                       validação, Keystore e importação da auth key
+    cloud/                     login na conta Xiaomi (QR) e leitura da chave no Mi Fitness
     log/                       log de pacotes
     ui/                        telas Compose (Conexão, Chave, Instalar, Faces, Logs)
 app/src/test/                  testes com uma banda simulada (transporte, autenticação, faces, upload)
@@ -82,6 +92,8 @@ Detalhes em [docs/PROTOCOLO.md](docs/PROTOCOLO.md#8-o-que-não-está-confirmado-
 - **Tamanho das partes:** segue o Gadgetbridge (`chunkSize − 4`); o miband-hack desconta 2 bytes a mais no SPP.
 - **Janela de envio:** 1 quadro por vez (cada parte espera o ACK da anterior), como pedido. É mais lento que a janela anunciada pela banda, mas mais conservador. Ajustável em `LinkConfig.maxWindow`.
 - **NO_BOUND:** uma Mi Band 10 vinculada a um iPhone recusou outro aparelho com `NO_BOUND` (captura do miband-hack). Se isso acontecer, vincule a banda pelo Mi Fitness **neste** celular e use a chave nova.
+
+- **Login na conta Xiaomi:** o fluxo foi portado do miband-hack, que avisa que ele segue três clientes de código aberto mas ainda não foi confirmado com uma conta e uma banda reais. A criptografia das requisições foi conferida com os vetores que eles geraram com as ferramentas em Python; o resto (respostas reais da Xiaomi, login pelo navegador do mesmo celular) não foi testado.
 
 ## Riscos
 
