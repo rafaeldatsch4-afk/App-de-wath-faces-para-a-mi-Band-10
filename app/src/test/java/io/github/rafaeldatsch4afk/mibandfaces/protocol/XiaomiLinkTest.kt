@@ -86,6 +86,8 @@ class XiaomiLinkTest {
         val link = XiaomiLink(band, PacketLog(), fastConfig)
         link.open(Collector())
         for (i in 0 until 20) link.send(SppV2.CHANNEL_DATA, byteArrayOf(i.toByte()), encrypt = false)
+        // A banda simulada entrega o pacote à camada de cima logo depois de mandar o ACK.
+        band.awaitIdle()
         assertEquals((0 until 20).toList(), band.acceptedSeqs.toList())
         assertEquals((0 until 20).toList(), received.map { it[0].toInt() })
         link.close()

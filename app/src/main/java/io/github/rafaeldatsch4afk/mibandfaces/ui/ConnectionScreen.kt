@@ -146,7 +146,9 @@ fun ConnectionScreen(vm: MainViewModel, gate: PermissionGate) {
                     "• A banda precisa estar vinculada à sua conta no Mi Fitness (é de lá que vem a chave).\n" +
                         "• Não desvincule a banda no Mi Fitness: isso invalida a chave.\n" +
                         "• Feche o Mi Fitness (ou tire a permissão de Bluetooth dele) para ele não disputar a conexão.\n" +
-                        "• No Bluetooth Clássico a banda precisa estar pareada com o Android (botão \"Parear\").",
+                        "• No Bluetooth Clássico a banda precisa estar pareada com o Android (botão \"Parear\"). " +
+                        "Se não funcionar, pareie pela tela de Bluetooth do Android.\n" +
+                        "• Até o Android 11, a localização do aparelho precisa estar ligada para a busca funcionar.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
