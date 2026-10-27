@@ -94,6 +94,14 @@ Não confirmado com conta real (o miband-hack avisa o mesmo).
 4. Dividido em partes de `chunkSize − 4` bytes; cada parte = `total (u16 LE) | índice começando em 1 (u16 LE) | dados`, enviada como DATA no canal 2. **Cada parte recebe um ACK de transporte da banda.**
 5. Terminado o envio, o Gadgetbridge ativa a face (`4/1`) e pede a lista de novo.
 
+## 6b. Mini-apps `.rpk` (`XiaomiRpkService`, `type = 20`)
+
+- **Arquivo:** ZIP (app Vela/QuickApp) com `manifest.json` (`package`, `name`, `versionName`, `versionCode`, `config.designWidth`, `router`), `app.js` e as páginas compiladas (`pages/<página>/<componente>.js`). O Gadgetbridge só lê o `manifest.json`; o app também confere o CRC de cada arquivo do ZIP, caminhos inválidos e a página inicial.
+- `20/0`: lista. Resposta `rpk.rpkList.rpkInfo[]` com `id` (o `package`), `name` e `sha`.
+- `20/1`: pedido de instalação com `rpk.rpkInfo` (`id`, `unknown2` = versionCode, `size`). Resposta `20/1` com `rpk.rpkInstallStart.cmd` (0 = aceito; os outros códigos não são conhecidos).
+- Envio: igual ao das faces (seção 6), mas com **tipo 64**. Ao terminar, a banda manda `20/2` (instalado). O app confere pela lista.
+- `20/3`: remover, com `rpk.rpkDel` (`id` e o `sha` da lista). Segundo o Gadgetbridge a banda às vezes não responde, então o resultado é conferido pela lista.
+
 ## 7. Formato do arquivo de watch face (`XiaomiFWHelper`)
 
 - **v2** (o que pode ser instalado): começa com `5A A5`. ID numérico em texto terminado em zero no offset `0x28`. Nome no offset `0x68` (ou tabela de traduções se `0x68` = `FF FF FF FF`). Offset do preview (u32) em `0x20`; o cabeçalho do preview tem largura/altura em `+4`/`+6`.

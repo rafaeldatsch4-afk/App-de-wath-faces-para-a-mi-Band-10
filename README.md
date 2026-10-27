@@ -1,8 +1,8 @@
 # Mi Band 10 Faces
 
-App Android (Kotlin + Jetpack Compose, tema escuro) para instalar watch faces na **Xiaomi Smart Band 10** direto do celular, sem usar o Mi Fitness para o envio. O protocolo foi portado do [Gadgetbridge](https://codeberg.org/Freeyourgadget/Gadgetbridge) e conferido com o [miband-hack](https://github.com/ptrinh/miband-hack).
+App Android (Kotlin + Jetpack Compose, tema escuro) para instalar watch faces e mini-apps (`.rpk`) na **Xiaomi Smart Band 10** direto do celular, sem usar o Mi Fitness para o envio. O protocolo foi portado do [Gadgetbridge](https://codeberg.org/Freeyourgadget/Gadgetbridge) e conferido com o [miband-hack](https://github.com/ptrinh/miband-hack).
 
-> ⚠️ **Ainda não foi testado com uma Mi Band 10 real.** Tudo foi validado com testes automáticos contra uma banda simulada (a criptografia do lado da banda nos testes é independente da do app). Leia [Riscos](#riscos) antes de usar e mande os logs da aba **Logs** se algo der errado.
+> ✅ **Testado com uma Mi Band 10 real** (M2459B1, firmware 3.2.7): login na conta Xiaomi, autenticação, acerto da hora, lista de faces e instalação de uma watch face funcionaram. A instalação de mini-apps `.rpk` ainda **não** foi testada na banda real (só contra a banda simulada dos testes). Leia [Riscos](#riscos) antes de usar e mande os logs da aba **Logs** se algo der errado.
 
 Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 
@@ -13,7 +13,7 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 - [x] Sondagem de versão SPP e sessão SPP V2 com ACK/NACK, reenvio por timeout e janela de envio
 - [x] Autenticação com a auth key (handshake miwear-auth, AES-CCM/CTR)
 - [x] Chave digitada (32 hex, aceita `0x`) ou importada de arquivo, guardada cifrada com o **Android Keystore**
-- [x] **Buscar a chave na conta Xiaomi**: login na página da própria Xiaomi (QR code ou navegador do celular; o app nunca vê a senha), leitura dos aparelhos do Mi Fitness e escolha da chave. **Ainda não confirmado com uma conta real**
+- [x] **Buscar a chave na conta Xiaomi**: login na página da própria Xiaomi (QR code ou navegador do celular; o app nunca vê a senha), leitura dos aparelhos do Mi Fitness e escolha da chave. Confirmado com uma conta real
 - [x] Importar a chave de arquivo: logs do Mi Fitness (`encryptKey`, `token`, `authKey`, `huamiAuthKey`) ou a pasta do Mi Fitness (`manifest.sqlite` / ZIP) com `registerList_<região>` de **todas** as regiões
 - [x] Acerto da hora da banda logo depois de autenticar (data, hora, fuso e formato 12/24 h do celular)
 - [x] Informações da banda (modelo, firmware, bateria)
@@ -24,6 +24,7 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 - [x] Cancelamento seguro: para entre duas partes, não ativa a face e fecha a conexão
 - [x] Reconexão automática se a banda derrubar a conexão, com retomada do envio da face (resumePosition)
 - [x] Lista das faces instaladas, com ativar e remover
+- [x] **Mini-apps `.rpk`** (apps Vela/QuickApp, como uma calculadora): validação do pacote (ZIP inteiro com CRC de cada arquivo, `manifest.json`, página inicial, largura de tela), ícone, instalação com o mesmo envio em partes (tipo 64), lista dos apps instalados e remoção. Portado do `XiaomiRpkService` do Gadgetbridge. **Ainda não testado na banda real**
 - [x] Log detalhado dos pacotes TX/RX (copiar/compartilhar); a chave nunca aparece no log
 
 ### Futuro (ainda não feito)
@@ -38,8 +39,8 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 2. Na aba **Chave**, toque em *Entrar na conta Xiaomi* (veja abaixo), ou digite a chave, ou toque em *Importar de um arquivo* (log do Mi Fitness, `manifest.sqlite` ou ZIP da pasta do Mi Fitness). Se aparecerem várias candidatas, comece pelas marcadas como "campo conhecido".
 3. Feche o Mi Fitness (ou tire a permissão de Bluetooth dele), para ele não disputar a conexão.
 4. Na aba **Conexão**: *Buscar* → toque na sua banda → *Parear* (confirme na banda) → *Conectar*. O status deve chegar a "Conectado e autenticado".
-5. Na aba **Instalar**: *Escolher arquivo*, confira a validação e o preview, marque "Entendo os riscos" e toque em *Instalar na banda*. Deixe o app aberto até terminar.
-6. Na aba **Faces**: veja as faces instaladas, ative ou remova.
+5. Na aba **Instalar**: *Escolher arquivo* (uma face `.face`/`.bin` ou um mini-app `.rpk`; o tipo é detectado pelo conteúdo), confira a validação e o preview, marque "Entendo os riscos" e toque em *Instalar na banda*. Deixe o app aberto até terminar.
+6. Na aba **Faces**: veja as faces instaladas (ative ou remova) e, abaixo delas, os mini-apps instalados (remova).
 
 ### Buscar a chave na conta Xiaomi
 
@@ -86,6 +87,7 @@ app/src/main/
                                criptografia (derivação de chaves, AES-CCM, AES-CTR)
     band/                      cliente da banda (comandos protobuf, autenticação), watch faces e envio em partes
     face/                      leitura/validação do .face, checagem estrutural, decodificação do preview
+    miniapp/                   leitura/validação do .rpk (ZIP + manifest.json)
     key/                       validação, Keystore e importação da auth key
     cloud/                     login na conta Xiaomi (QR) e leitura da chave no Mi Fitness
     log/                       log de pacotes
@@ -112,6 +114,7 @@ Detalhes em [docs/PROTOCOLO.md](docs/PROTOCOLO.md#8-o-que-não-está-confirmado-
   - recusa watch faces v3, firmware e arquivos desconhecidos;
   - manda o MD5 e o CRC32 do arquivo inteiro, como o Gadgetbridge, para a banda conferir;
   - nunca corta um pacote no meio ao cancelar, e não ativa uma face cujo envio não terminou.
+- Um mini-app `.rpk` roda código JavaScript de outra pessoa dentro da banda. Ele não mexe no firmware, mas um app com defeito pode travar ou fechar sozinho; nesse caso, remova-o na aba **Faces**. Instale só apps de quem você confia.
 - Mantenha a banda carregada e perto do celular durante o envio.
 - Uso pessoal, no seu próprio aparelho. O app não mexe em firmware.
 

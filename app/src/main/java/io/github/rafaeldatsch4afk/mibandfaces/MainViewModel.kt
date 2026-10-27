@@ -1,14 +1,18 @@
 package io.github.rafaeldatsch4afk.mibandfaces
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.bluetooth.BluetoothManager
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.rafaeldatsch4afk.mibandfaces.band.BandState
+import io.github.rafaeldatsch4afk.mibandfaces.band.AppAlreadyInstalledException
 import io.github.rafaeldatsch4afk.mibandfaces.band.FaceAlreadyInstalledException
 import io.github.rafaeldatsch4afk.mibandfaces.band.InstallProgress
+import io.github.rafaeldatsch4afk.mibandfaces.band.InstalledApp
 import io.github.rafaeldatsch4afk.mibandfaces.band.InstalledFace
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BandScanner
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BandTransport
@@ -27,6 +31,7 @@ import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKey
 import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKeyImporter
 import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKeyStore
 import io.github.rafaeldatsch4afk.mibandfaces.key.KeyCandidate
+import io.github.rafaeldatsch4afk.mibandfaces.miniapp.RpkFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -51,6 +56,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val client = container.client
     private val keyStore = AuthKeyStore(app)
     val watchfaces = container.watchfaces
+    val miniApps = container.miniApps
 
     /** Chave salva (normalizada) ou null. Só a versão mascarada vai para a tela. */
     private val _savedKey = MutableStateFlow(keyStore.load())
@@ -79,6 +85,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _selectedFace = MutableStateFlow<SelectedFace?>(null)
     val selectedFace: StateFlow<SelectedFace?> = _selectedFace.asStateFlow()
 
+    /** Mini-app .rpk escolhido (no lugar de uma face) e o ícone dele, se houver. */
+    data class SelectedApp(val fileName: String, val parsed: RpkFile, val icon: Bitmap?)
+
+    private val _selectedApp = MutableStateFlow<SelectedApp?>(null)
+    val selectedApp: StateFlow<SelectedApp?> = _selectedApp.asStateFlow()
+
     sealed interface InstallState {
         data object Idle : InstallState
         data class Running(val progress: InstallProgress) : InstallState
@@ -87,6 +99,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         /** A mesma face já está na banda: perguntar se deve remover a antiga. */
         data class AskReplace(val existing: InstalledFace) : InstallState
+
+        /** O mesmo mini-app já está na banda: perguntar se deve remover o antigo. */
+        data class AskReplaceApp(val existing: InstalledApp) : InstallState
     }
 
     private val _install = MutableStateFlow<InstallState>(InstallState.Idle)
@@ -98,11 +113,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             client.state.collect { state ->
                 when (state) {
-                    is BandState.Ready -> runCatching { watchfaces.refresh() }.onFailure {
-                        log.warn("Não consegui ler a lista de faces: ${it.message}")
+                    is BandState.Ready -> {
+                        runCatching { watchfaces.refresh() }.onFailure {
+                            log.warn("Não consegui ler a lista de faces: ${it.message}")
+                        }
+                        runCatching { miniApps.refresh() }.onFailure {
+                            log.warn("Não consegui ler a lista de mini-apps: ${it.message}")
+                        }
                     }
                     is BandState.Disconnected, is BandState.Failed -> {
                         watchfaces.clear()
+                        miniApps.clear()
                         ConnectionService.stop(getApplication())
                     }
                     else -> Unit
@@ -319,24 +340,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun disconnect() = client.disconnect()
 
-    // ---------------------------------------------------------------- watch faces ---
+    // ------------------------------------------------------- watch faces e mini-apps ---
 
-    fun pickFace(uri: Uri) {
+    /** Abre um arquivo escolhido: watch face (.face/.bin) ou mini-app (.rpk), pelo conteúdo. */
+    fun pickFile(uri: Uri) {
         viewModelScope.launch {
             try {
                 val app = getApplication<Application>()
                 val (name, size) = withContext(Dispatchers.IO) { describe(uri) }
-                if (size != null && size > FaceFile.MAX_SIZE) {
-                    _message.value = "Arquivo grande demais para uma watch face (${size / 1024} KB)"
+                val limit = maxOf(FaceFile.MAX_SIZE, RpkFile.MAX_SIZE)
+                if (size != null && size > limit) {
+                    _message.value = "Arquivo grande demais (${size / 1024} KB)"
                     return@launch
                 }
                 val bytes = withContext(Dispatchers.IO) {
-                    app.contentResolver.openInputStream(uri)?.use { readLimited(it, FaceFile.MAX_SIZE) }
+                    app.contentResolver.openInputStream(uri)?.use { readLimited(it, limit) }
                 }
                 if (bytes == null) {
                     _message.value = "Não consegui ler o arquivo (ou ele é grande demais)"
                     return@launch
                 }
+                _install.value = InstallState.Idle
+                if (RpkFile.looksLikeRpk(bytes)) {
+                    openApp(name ?: "arquivo", bytes)
+                    return@launch
+                }
+                _selectedApp.value = null
                 val parsed = withContext(Dispatchers.Default) { FaceFile.parse(bytes) }
                 val preview = (parsed as? FaceFile.V2)?.preview?.let { header ->
                     withContext(Dispatchers.Default) { runCatching { FacePreview.decode(bytes, header) }.getOrNull() }
@@ -351,6 +380,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 log.error("Falha ao abrir o arquivo", e)
                 _message.value = "Falha ao abrir o arquivo: ${e.message}"
             }
+        }
+    }
+
+    private suspend fun openApp(fileName: String, bytes: ByteArray) {
+        val parsed = withContext(Dispatchers.Default) { RpkFile.parse(bytes) }
+        val icon = (parsed as? RpkFile.Valid)?.icon?.let { png ->
+            withContext(Dispatchers.Default) { runCatching { BitmapFactory.decodeByteArray(png, 0, png.size) }.getOrNull() }
+        }
+        _selectedFace.value = null
+        _selectedApp.value = SelectedApp(fileName, parsed, icon)
+        when (parsed) {
+            is RpkFile.Valid -> log.info(
+                "Arquivo $fileName: mini-app \"${parsed.name}\" ${parsed.packageName} v${parsed.versionName} " +
+                    "(versionCode ${parsed.versionCode}), ${bytes.size} bytes, ${parsed.fileCount} arquivos" +
+                    parsed.warnings.joinToString("") { "; aviso: $it" },
+            )
+            is RpkFile.Rejected -> log.warn("Arquivo $fileName recusado: ${parsed.reason}")
         }
     }
 
@@ -382,6 +428,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun installSelected(replaceExisting: Boolean = false) {
+        (_selectedApp.value?.parsed as? RpkFile.Valid)?.let { return installApp(it, replaceExisting) }
         val face = _selectedFace.value?.parsed as? FaceFile.V2 ?: return
         if (installJob?.isActive == true) return
         installJob = viewModelScope.launch {
@@ -401,6 +448,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun installApp(file: RpkFile.Valid, replaceExisting: Boolean) {
+        if (installJob?.isActive == true) return
+        installJob = viewModelScope.launch {
+            _install.value = InstallState.Running(InstallProgress("Começando…", null))
+            try {
+                miniApps.install(file, replaceExisting) { _install.value = InstallState.Running(it) }
+                _install.value = InstallState.Done("App \"${file.name}\" instalado. Procure por ele na lista de apps da banda.")
+            } catch (e: AppAlreadyInstalledException) {
+                _install.value = InstallState.AskReplaceApp(e.app)
+            } catch (e: CancellationException) {
+                _install.value = InstallState.Failed("Envio cancelado. O app não foi instalado e a conexão foi fechada.")
+                throw e
+            } catch (e: Exception) {
+                log.error("Instalação do app falhou", e)
+                _install.value = InstallState.Failed(e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
     fun cancelInstall() {
         installJob?.cancel()
     }
@@ -414,6 +480,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun activateFace(face: InstalledFace) = faceAction { watchfaces.setActive(face.id) }
 
     fun deleteFace(face: InstalledFace) = faceAction { watchfaces.delete(face) }
+
+    fun refreshApps() = faceAction { miniApps.refresh() }
+
+    fun deleteApp(app: InstalledApp) = faceAction { miniApps.delete(app) }
 
     private fun faceAction(action: suspend () -> Unit) {
         if (installJob?.isActive == true) {

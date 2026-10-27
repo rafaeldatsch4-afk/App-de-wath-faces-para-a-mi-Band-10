@@ -17,10 +17,18 @@ object Commands {
     const val WATCHFACE_DELETE = 2
     const val WATCHFACE_INSTALL = 4
 
+    // XiaomiRpkService (mini-apps .rpk)
+    const val RPK = 20
+    const val RPK_LIST = 0
+    const val RPK_INSTALL = 1
+    const val RPK_INSTALLED = 2
+    const val RPK_DELETE = 3
+
     // XiaomiDataUploadService
     const val DATA_UPLOAD = 22
     const val DATA_UPLOAD_START = 0
     const val UPLOAD_TYPE_WATCHFACE = 16
+    const val UPLOAD_TYPE_RPK = 64
 
     fun simple(type: Int, subtype: Int): Command = Command.newBuilder().setType(type).setSubtype(subtype).build()
 

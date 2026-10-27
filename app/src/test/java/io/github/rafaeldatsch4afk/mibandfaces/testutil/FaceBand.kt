@@ -1,8 +1,13 @@
 package io.github.rafaeldatsch4afk.mibandfaces.testutil
 
+import com.google.protobuf.ByteString
 import io.github.rafaeldatsch4afk.mibandfaces.proto.Command
 import io.github.rafaeldatsch4afk.mibandfaces.proto.DataUpload
 import io.github.rafaeldatsch4afk.mibandfaces.proto.DataUploadAck
+import io.github.rafaeldatsch4afk.mibandfaces.proto.Rpk
+import io.github.rafaeldatsch4afk.mibandfaces.proto.RpkInfoList
+import io.github.rafaeldatsch4afk.mibandfaces.proto.RpkInstallStart
+import io.github.rafaeldatsch4afk.mibandfaces.proto.RpkList
 import io.github.rafaeldatsch4afk.mibandfaces.proto.Watchface
 import io.github.rafaeldatsch4afk.mibandfaces.proto.WatchfaceInfo
 import io.github.rafaeldatsch4afk.mibandfaces.proto.WatchfaceList
@@ -14,7 +19,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.zip.CRC32
 
 /**
- * Banda simulada com watch faces: lista, ativa, remove e recebe o envio em partes, conferindo o
+ * Banda simulada com watch faces e mini-apps: lista, ativa, remove e recebe o envio em partes, conferindo o
  * MD5, o tamanho e o CRC32 do payload (formato de XiaomiDataUploadService).
  */
 class FaceBand(authKey: ByteArray) : FakeBand(authKey) {
@@ -49,6 +54,18 @@ class FaceBand(authKey: ByteArray) : FakeBand(authKey) {
     var uploadOk: Boolean? = null
         private set
 
+    /** Mini-apps instalados (id, nome) e o sha que a banda devolve na lista. */
+    val apps = CopyOnWriteArrayList<Pair<String, String>>()
+
+    /** Status da resposta 20/1 (0 = aceito). */
+    var rpkInstallStatus = 0
+
+    /** Tipo do último envio 22/0 (16 = face, 64 = mini-app). */
+    @Volatile
+    var uploadType = 0
+        private set
+
+    private var pendingAppId: String? = null
     private var pendingId: String? = null
     private var pendingSize = 0
     private val upload = ByteArrayOutputStream()
@@ -76,9 +93,32 @@ class FaceBand(authKey: ByteArray) : FakeBand(authKey) {
                 }
                 reply(Command.newBuilder().setType(4).setSubtype(4).setWatchface(Watchface.newBuilder().setInstallStatus(status)).build())
             }
+            command.type == 20 && command.subtype == 0 -> {
+                val list = RpkList.newBuilder()
+                for ((id, name) in apps) {
+                    list.addRpkInfo(RpkInfoList.newBuilder().setId(id).setName(name).setSha(ByteString.copyFromUtf8("sha-$id")))
+                }
+                reply(Command.newBuilder().setType(20).setSubtype(0).setRpk(Rpk.newBuilder().setRpkList(list)).build())
+            }
+            command.type == 20 && command.subtype == 1 -> {
+                val info = command.rpk.rpkInfo
+                if (rpkInstallStatus == 0) {
+                    if (info.id != pendingAppId) filePrefix = ByteArray(0)
+                    pendingAppId = info.id
+                    pendingSize = info.size
+                }
+                reply(Command.newBuilder().setType(20).setSubtype(1).setRpk(Rpk.newBuilder().setRpkInstallStart(RpkInstallStart.newBuilder().setCmd(rpkInstallStatus))).build())
+            }
+            command.type == 20 && command.subtype == 3 -> {
+                val del = command.rpk.rpkDel
+                check(del.sha == ByteString.copyFromUtf8("sha-${del.id}")) { "sha errado ao remover" }
+                apps.removeIf { it.first == del.id }
+                // Como o Gadgetbridge descreve: a banda não responde à remoção.
+            }
             command.type == 22 && command.subtype == 0 -> {
                 val request = command.dataUpload.dataUploadRequest
-                check(request.type == 16) { "tipo de upload ${request.type}" }
+                check(request.type == 16 || request.type == 64) { "tipo de upload ${request.type}" }
+                uploadType = request.type
                 check(request.size == pendingSize) { "tamanho diferente do pedido de instalação" }
                 if (resumable) {
                     // Guarda os bytes do arquivo que chegaram antes da queda (o payload começa com 22 bytes de cabeçalho).
@@ -116,7 +156,7 @@ class FaceBand(authKey: ByteArray) : FakeBand(authKey) {
         val p = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
         val ok = runCatching {
             check(p.get().toInt() == 0)
-            check(p.get().toInt() == 16)
+            check(p.get().toInt() and 0xff == uploadType)
             val md5 = ByteArray(16).also { p.get(it) }
             val size = p.int
             check(size == pendingSize)
@@ -128,7 +168,12 @@ class FaceBand(authKey: ByteArray) : FakeBand(authKey) {
             check(CRC32().apply { update(payload, 0, payload.size - 4) }.value == crc)
         }.isSuccess
         uploadOk = ok
-        if (ok) faces += Face(pendingId!!, "Nova face", active = false, canDelete = true)
+        if (ok && uploadType == 16) faces += Face(pendingId!!, "Nova face", active = false, canDelete = true)
+        if (ok && uploadType == 64) {
+            apps += pendingAppId!! to "Novo app"
+            // Aviso de instalação concluída (20/2), como a banda manda.
+            reply(Command.newBuilder().setType(20).setSubtype(2).build())
+        }
     }
 
     private companion object {

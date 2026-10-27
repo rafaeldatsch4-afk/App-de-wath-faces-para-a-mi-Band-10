@@ -1,27 +1,15 @@
 package io.github.rafaeldatsch4afk.mibandfaces.band
 
-import com.google.protobuf.ByteString
 import io.github.rafaeldatsch4afk.mibandfaces.band.Commands.isA
 import io.github.rafaeldatsch4afk.mibandfaces.face.FaceFile
 import io.github.rafaeldatsch4afk.mibandfaces.log.PacketLog
 import io.github.rafaeldatsch4afk.mibandfaces.proto.Command
-import io.github.rafaeldatsch4afk.mibandfaces.proto.DataUpload
-import io.github.rafaeldatsch4afk.mibandfaces.proto.DataUploadRequest
 import io.github.rafaeldatsch4afk.mibandfaces.proto.Watchface
 import io.github.rafaeldatsch4afk.mibandfaces.proto.WatchfaceInstallStart
-import io.github.rafaeldatsch4afk.mibandfaces.protocol.LinkException
-import io.github.rafaeldatsch4afk.mibandfaces.protocol.NackException
-import io.github.rafaeldatsch4afk.mibandfaces.util.md5
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.withContext
-import kotlin.coroutines.coroutineContext
 
 /** Uma watch face instalada na banda (WatchfaceInfo). */
 data class InstalledFace(val id: String, val name: String, val active: Boolean, val canDelete: Boolean)
@@ -45,8 +33,9 @@ class WatchfaceManager(
     private val settleDelayMs: Long = 1_500,
     private val shortTimeoutMs: Long = 5_000,
     /** Quanto esperar a reconexão automática quando a conexão cai no meio da instalação. */
-    private val reconnectWaitMs: Long = 45_000,
+    reconnectWaitMs: Long = 45_000,
 ) {
+    private val uploader = FileUploader(client, log, reconnectWaitMs)
     private val _faces = MutableStateFlow<List<InstalledFace>?>(null)
 
     /** Faces instaladas (null = ainda não lido). */
@@ -96,7 +85,7 @@ class WatchfaceManager(
      *
      * Queda da conexão: a Mi Band 10 real fecha o RFCOMM de vez em quando. Se o [BandClient]
      * reconectar sozinho, o envio recomeça com os mesmos pedidos 4/4 e 22/0, e a banda diz de onde
-     * continuar (resumePosition, como no Gadgetbridge). Até [MAX_RESUMES] vezes.
+     * continuar (resumePosition, como no Gadgetbridge). Veja [FileUploader].
      */
     suspend fun install(
         file: FaceFile.V2,
@@ -117,56 +106,17 @@ class WatchfaceManager(
         if (faces.size >= MAX_FACES) throw BandFullException(faces.size)
 
         checkInstallStatus(requestInstall(file, onProgress))
-        uploading {
-            var resumes = 0
-            while (true) {
-                val generation = client.connectionGeneration
-                try {
-                    if (resumes > 0) {
-                        val status = requestInstall(file, onProgress)
-                        // A banda pode ter terminado a instalação antes de a conexão cair.
-                        if (status == INSTALL_STATUS_ALREADY_INSTALLED) {
-                            log.info("Depois de reconectar, a banda diz que a face já está instalada")
-                            break
-                        }
-                        checkInstallStatus(status)
-                    }
-                    upload(file.bytes, onProgress)
-                    break
-                } catch (e: Exception) {
-                    if (!isConnectionLoss(e) || resumes >= MAX_RESUMES) throw e
-                    resumes++
-                    log.warn("A conexão caiu durante o envio (${e.message}). Esperando a reconexão para continuar ($resumes de $MAX_RESUMES)")
-                    awaitReconnection(generation, onProgress, "continuar o envio")
-                }
+        uploader.send(Commands.UPLOAD_TYPE_WATCHFACE, file.bytes, onProgress) {
+            val status = requestInstall(file, onProgress)
+            // A banda pode ter terminado a instalação antes de a conexão cair.
+            if (status == INSTALL_STATUS_ALREADY_INSTALLED) {
+                FileUploader.Restart.ALREADY_INSTALLED
+            } else {
+                checkInstallStatus(status)
+                FileUploader.Restart.CONTINUE
             }
         }
-
-        var resumes = 0
-        while (true) {
-            val generation = client.connectionGeneration
-            try {
-                confirmAndActivate(file, onProgress)
-                return
-            } catch (e: Exception) {
-                if (!isConnectionLoss(e) || resumes >= MAX_RESUMES) throw e
-                resumes++
-                log.warn("A conexão caiu ao confirmar a instalação (${e.message}). Esperando a reconexão")
-                awaitReconnection(generation, onProgress, "conferir a instalação")
-            }
-        }
-    }
-
-    /** Queda do Bluetooth (reconectável). Um NACK repetido não é queda: a banda recusou os dados. */
-    private fun isConnectionLoss(e: Exception): Boolean =
-        e !is NackException && (e is LinkException || e is NotConnectedException || e is java.io.IOException)
-
-    private suspend fun awaitReconnection(generation: Int, onProgress: (InstallProgress) -> Unit, toDo: String) {
-        onProgress(InstallProgress("A conexão caiu. Reconectando para $toDo…", null))
-        if (!client.awaitReconnection(generation, reconnectWaitMs)) {
-            throw InstallException("A conexão caiu durante a instalação e não voltou. A face não foi ativada; tente de novo.")
-        }
-        log.info("Reconectado: retomando para $toDo")
+        uploader.retryingOnLoss("conferir a instalação", onProgress) { confirmAndActivate(file, onProgress) }
     }
 
     /** Pedido de instalação (4/4). Retorna o installStatus da banda. */
@@ -231,68 +181,6 @@ class WatchfaceManager(
         delete(existing.copy(active = false))
     }
 
-    /** Fecha a conexão se o envio for cancelado ou falhar no meio. */
-    private suspend fun uploading(block: suspend () -> Unit) {
-        try {
-            block()
-        } catch (e: Throwable) {
-            withContext(NonCancellable) {
-                if (e is CancellationException) log.warn("Envio cancelado pelo usuário: fechando a conexão sem ativar a face")
-                else log.error("Envio interrompido: fechando a conexão", e)
-                client.disconnect()
-            }
-            throw e
-        }
-    }
-
-    private suspend fun upload(bytes: ByteArray, onProgress: (InstallProgress) -> Unit) {
-        onProgress(InstallProgress("Negociando o envio…", 0f))
-        val reply = client.request(
-            Command.newBuilder().setType(Commands.DATA_UPLOAD).setSubtype(Commands.DATA_UPLOAD_START)
-                .setDataUpload(
-                    DataUpload.newBuilder().setDataUploadRequest(
-                        DataUploadRequest.newBuilder()
-                            .setType(Commands.UPLOAD_TYPE_WATCHFACE)
-                            .setMd5Sum(ByteString.copyFrom(md5(bytes)))
-                            .setSize(bytes.size),
-                    ),
-                ).build(),
-            "início do envio",
-        ) { it.isA(Commands.DATA_UPLOAD, Commands.DATA_UPLOAD_START) }
-        if (!reply.dataUpload.hasDataUploadAck()) throw InstallException("Resposta inválida da banda ao pedido de envio")
-        val ack = reply.dataUpload.dataUploadAck
-        if (ack.errno != 0) {
-            throw InstallException("A banda recusou o envio (errno ${ack.errno}). Pode ser falta de espaço: remova uma face e tente de novo.")
-        }
-        val chunkSize = if (ack.hasChunkSize() && ack.chunkSize > 4) ack.chunkSize else UploadPayload.DEFAULT_CHUNK_SIZE
-        val resume = ack.resumePosition
-        if (resume < 0 || resume > bytes.size) throw InstallException("A banda pediu para retomar de uma posição inválida ($resume)")
-        if (resume > 0) log.warn("A banda pediu para retomar o envio a partir do byte $resume")
-        val parts = UploadPayload.parts(UploadPayload.build(Commands.UPLOAD_TYPE_WATCHFACE, bytes, resume), chunkSize)
-        log.info("Envio: ${bytes.size} bytes em ${parts.size} partes de até $chunkSize bytes (janela ${client.linkWindow})")
-
-        val pending = ArrayDeque<Deferred<Unit>>()
-        var acked = 0
-        fun report() = onProgress(InstallProgress("Enviando parte $acked de ${parts.size}…", acked.toFloat() / parts.size))
-        report()
-        for (part in parts) {
-            coroutineContext.ensureActive()
-            // enqueue() suspende enquanto a janela estiver cheia; com janela 1, cada parte só sai
-            // depois do ACK da anterior.
-            pending.addLast(client.enqueueData(part))
-            while (pending.isNotEmpty() && pending.first().isCompleted) {
-                pending.removeFirst().await()
-                acked++
-                report()
-            }
-        }
-        while (pending.isNotEmpty()) {
-            pending.removeFirst().await()
-            acked++
-            report()
-        }
-    }
-
     /** Pedidos em que a banda pode não responder: o resultado é conferido depois pela lista. */
     private suspend fun requestTolerant(command: Command, what: String, subtype: Int) {
         try {
@@ -313,9 +201,6 @@ class WatchfaceManager(
          * é o valor informado na especificação do app.
          */
         const val MAX_FACES = 10
-
-        /** Quantas vezes o envio continua depois de uma queda da conexão. */
-        const val MAX_RESUMES = 5
 
         private const val INSTALL_STATUS_ALREADY_INSTALLED = 2
     }

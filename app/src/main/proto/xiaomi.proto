@@ -22,6 +22,9 @@ message Command {
   optional System system = 4;
   optional Watchface watchface = 6;
 
+  // tipo 20 (mini-apps .rpk)
+  optional Rpk rpk = 22;
+
   // tipo 22
   optional DataUpload dataUpload = 24;
 
@@ -176,6 +179,42 @@ message WatchfaceInstallFinish {
   optional uint32 unknown4 = 4;
 }
 
+// ------------------------------------------------------------- mini-apps .rpk (tipo 20) ---
+// De xiaomi/wear_thirdparty_app.proto do Gadgetbridge (mesmos números de campo).
+
+message Rpk {
+  // 20, 0 lista
+  optional RpkList rpkList = 1;
+  // 20, 1 pedido de instalação (celular -> banda)
+  optional RpkInfo rpkInfo = 2;
+  // 20, 1 resposta ao pedido de instalação (banda -> celular)
+  optional RpkInstallStart rpkInstallStart = 3;
+  // 20, 3 remover
+  optional RpkInfoList rpkDel = 5;
+}
+
+message RpkList {
+  repeated RpkInfoList rpkInfo = 1;
+}
+
+message RpkInfo {
+  optional string id = 1;
+  optional uint32 unknown2 = 2; // o Gadgetbridge manda o versionCode do manifest
+  optional uint32 size = 3;
+}
+
+message RpkInfoList {
+  optional string id = 1;
+  optional bytes sha = 2; // a banda pede o mesmo valor de volta para remover
+  optional uint32 unknown3 = 3;
+  optional uint32 unknown4 = 4;
+  optional string name = 5;
+}
+
+message RpkInstallStart {
+  optional uint32 cmd = 1; // 0 = aceito
+}
+
 // --------------------------------------------------------------- envio de dados (tipo 22) ---
 
 message DataUpload {
@@ -185,7 +224,7 @@ message DataUpload {
 }
 
 message DataUploadRequest {
-  optional uint32 type = 1; // 16 = watch face
+  optional uint32 type = 1; // 16 = watch face, 64 = mini-app .rpk
   optional bytes md5sum = 2;
   optional uint32 size = 3;
 }

@@ -49,10 +49,12 @@ import io.github.rafaeldatsch4afk.mibandfaces.band.WatchfaceManager
 import io.github.rafaeldatsch4afk.mibandfaces.face.ArgbImage
 import io.github.rafaeldatsch4afk.mibandfaces.face.Compatibility
 import io.github.rafaeldatsch4afk.mibandfaces.face.FaceFile
+import io.github.rafaeldatsch4afk.mibandfaces.miniapp.RpkFile
 
 @Composable
 fun InstallScreen(vm: MainViewModel) {
     val selected by vm.selectedFace.collectAsStateWithLifecycle()
+    val selectedApp by vm.selectedApp.collectAsStateWithLifecycle()
     val install by vm.install.collectAsStateWithLifecycle()
     val band by vm.client.state.collectAsStateWithLifecycle()
     val faces by vm.watchfaces.faces.collectAsStateWithLifecycle()
@@ -69,7 +71,7 @@ fun InstallScreen(vm: MainViewModel) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             acceptedRisk = false
-            vm.pickFace(uri)
+            vm.pickFile(uri)
         }
     }
 
@@ -79,7 +81,7 @@ fun InstallScreen(vm: MainViewModel) {
     ) {
         SectionCard("Arquivo") {
             Text(
-                "Escolha um arquivo de watch face (.face ou .bin) para a Mi Band 10.",
+                "Escolha uma watch face (.face ou .bin) ou um mini-app (.rpk) para a Mi Band 10.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             // .face não tem tipo MIME registrado; a validação é feita pelo conteúdo.
@@ -89,13 +91,38 @@ fun InstallScreen(vm: MainViewModel) {
         selected?.let { sel ->
             FaceDetails(sel.fileName, sel.parsed, sel.preview)
         }
+        selectedApp?.let { sel ->
+            AppDetails(sel.fileName, sel.parsed, sel.icon)
+        }
+
+        val app = selectedApp?.parsed as? RpkFile.Valid
+        if (app != null) {
+            SectionCard("Instalar o app") {
+                WarningBox(
+                    "Riscos: um mini-app roda código de outra pessoa na banda. Ele não mexe no firmware, mas " +
+                        "um app com defeito pode travar ou fechar sozinho (aí é só removê-lo na aba Faces). " +
+                        "Instale só apps de quem você confia. Mantenha a banda carregada e perto do celular.",
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = acceptedRisk, onCheckedChange = { acceptedRisk = it }, enabled = !running)
+                    Text("Entendo os riscos e quero instalar", style = MaterialTheme.typography.bodyMedium)
+                }
+                if (band !is BandState.Ready) {
+                    Text("Conecte a banda na aba Conexão primeiro.", color = MaterialTheme.colorScheme.error)
+                }
+                Button(
+                    enabled = acceptedRisk && !running && band is BandState.Ready,
+                    onClick = { vm.installSelected() },
+                ) { Text("Instalar o app na banda") }
+            }
+        }
 
         val face = selected?.parsed as? FaceFile.V2
         if (face != null && face.canInstall) {
             SectionCard("Instalar") {
                 WarningBox(
                     "Riscos: um envio corrompido ou uma face malformada pode travar a banda. O arquivo foi " +
-                        "validado, mas este app ainda não foi testado com uma Mi Band 10 real. Mantenha a banda " +
+                        "validado e a instalação já funcionou numa Mi Band 10 real, mas cada face é diferente. Mantenha a banda " +
                         "carregada e perto do celular, e não feche o app durante o envio.",
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -125,7 +152,7 @@ fun InstallScreen(vm: MainViewModel) {
                 }
                 OutlinedButton(onClick = { vm.cancelInstall() }) { Text("Cancelar") }
                 Text(
-                    "Cancelar para entre duas partes (nunca no meio de um pacote), não ativa a face e fecha a conexão.",
+                    "Cancelar para entre duas partes (nunca no meio de um pacote), não ativa nada e fecha a conexão.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -151,6 +178,20 @@ fun InstallScreen(vm: MainViewModel) {
                 },
                 confirmButton = {
                     TextButton(onClick = { vm.installSelected(replaceExisting = true) }) { Text("Remover a antiga e instalar") }
+                },
+                dismissButton = { TextButton(onClick = { vm.dismissInstallResult() }) { Text("Cancelar") } },
+            )
+            is InstallState.AskReplaceApp -> AlertDialog(
+                onDismissRequest = { vm.dismissInstallResult() },
+                title = { Text("App já instalado") },
+                text = {
+                    Text(
+                        "\"${state.existing.name}\" (${state.existing.id}) já está na banda. A versão antiga " +
+                            "precisa ser removida antes de instalar a nova (os dados salvos pelo app na banda podem se perder).",
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { vm.installSelected(replaceExisting = true) }) { Text("Remover o antigo e instalar") }
                 },
                 dismissButton = { TextButton(onClick = { vm.dismissInstallResult() }) { Text("Cancelar") } },
             )
@@ -183,6 +224,37 @@ private fun FaceDetails(fileName: String, parsed: FaceFile, preview: ArgbImage?)
                     Compatibility.INCOMPATIBLE -> WarningBox("Não pode ser instalado: ${parsed.compatibility.description}")
                 }
                 if (preview != null) PreviewImage(preview)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppDetails(fileName: String, parsed: RpkFile, icon: Bitmap?) {
+    SectionCard("Validação do mini-app") {
+        LabeledValue("Arquivo", fileName)
+        LabeledValue("Tamanho", "${parsed.bytes.size / 1024} KB (${parsed.bytes.size} bytes)")
+        when (parsed) {
+            is RpkFile.Rejected -> WarningBox("Não pode ser instalado: ${parsed.reason}")
+            is RpkFile.Valid -> {
+                if (icon != null) {
+                    val bitmap = remember(icon) { icon.asImageBitmap() }
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = "Ícone do app",
+                        modifier = Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)),
+                    )
+                }
+                LabeledValue("Nome", parsed.name)
+                LabeledValue("Pacote", parsed.packageName)
+                LabeledValue("Versão", "${parsed.versionName} (versionCode ${parsed.versionCode})")
+                parsed.designWidth?.let { LabeledValue("Largura de tela", "$it px") }
+                if (parsed.features.isNotEmpty()) LabeledValue("Recursos usados", parsed.features.joinToString())
+                Text(
+                    "✓ ZIP conferido: ${parsed.fileCount} arquivos, ${parsed.unpackedSize / 1024} KB descompactados, CRC de cada arquivo OK",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                parsed.warnings.forEach { WarningBox(it, color = MaterialTheme.colorScheme.primary) }
             }
         }
     }

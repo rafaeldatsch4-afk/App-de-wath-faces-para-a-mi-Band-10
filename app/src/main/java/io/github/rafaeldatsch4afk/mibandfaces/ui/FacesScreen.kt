@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Watch
@@ -34,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.rafaeldatsch4afk.mibandfaces.MainViewModel
 import io.github.rafaeldatsch4afk.mibandfaces.band.BandState
+import io.github.rafaeldatsch4afk.mibandfaces.band.InstalledApp
 import io.github.rafaeldatsch4afk.mibandfaces.band.InstalledFace
 import io.github.rafaeldatsch4afk.mibandfaces.band.WatchfaceManager
 
@@ -41,7 +43,9 @@ import io.github.rafaeldatsch4afk.mibandfaces.band.WatchfaceManager
 fun FacesScreen(vm: MainViewModel) {
     val faces by vm.watchfaces.faces.collectAsStateWithLifecycle()
     val band by vm.client.state.collectAsStateWithLifecycle()
+    val apps by vm.miniApps.apps.collectAsStateWithLifecycle()
     var toDelete by remember { mutableStateOf<InstalledFace?>(null) }
+    var appToDelete by remember { mutableStateOf<InstalledApp?>(null) }
     val ready = band is BandState.Ready
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
@@ -96,8 +100,51 @@ fun FacesScreen(vm: MainViewModel) {
                     },
                 )
             }
+            if (ready) {
+                item {
+                    Row(Modifier.fillMaxWidth().padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            apps?.let { "Mini-apps na banda: ${it.size}" } ?: "Mini-apps na banda",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedButton(onClick = { vm.refreshApps() }) { Text("Atualizar") }
+                    }
+                }
+                if (apps?.isEmpty() == true) {
+                    item { Text("Nenhum mini-app instalado.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+            }
+            items(if (ready) apps.orEmpty() else emptyList(), key = { "app:" + it.id }) { app ->
+                ListItem(
+                    colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                    leadingContent = { Icon(Icons.Filled.Apps, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    headlineContent = { Text(app.name) },
+                    supportingContent = {
+                        Column {
+                            Text(app.id, style = MaterialTheme.typography.bodySmall)
+                            OutlinedButton(onClick = { appToDelete = app }) { Text("Remover") }
+                        }
+                    },
+                )
+            }
             item { Spacer(Modifier.size(16.dp)) }
         }
+    }
+
+    appToDelete?.let { app ->
+        AlertDialog(
+            onDismissRequest = { appToDelete = null },
+            title = { Text("Remover app?") },
+            text = { Text("Remover \"${app.name}\" (${app.id}) da banda? Os dados que ele salvou na banda podem se perder.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.deleteApp(app)
+                    appToDelete = null
+                }) { Text("Remover") }
+            },
+            dismissButton = { TextButton(onClick = { appToDelete = null }) { Text("Cancelar") } },
+        )
     }
 
     toDelete?.let { face ->
