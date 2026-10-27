@@ -9,6 +9,8 @@ import io.github.rafaeldatsch4afk.mibandfaces.proto.DataUpload
 import io.github.rafaeldatsch4afk.mibandfaces.proto.DataUploadRequest
 import io.github.rafaeldatsch4afk.mibandfaces.proto.Watchface
 import io.github.rafaeldatsch4afk.mibandfaces.proto.WatchfaceInstallStart
+import io.github.rafaeldatsch4afk.mibandfaces.protocol.LinkException
+import io.github.rafaeldatsch4afk.mibandfaces.protocol.NackException
 import io.github.rafaeldatsch4afk.mibandfaces.util.md5
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
@@ -42,6 +44,8 @@ class WatchfaceManager(
     /** Espera depois do último pedaço, antes de conferir a lista (o miband-hack usa 1,5 s). */
     private val settleDelayMs: Long = 1_500,
     private val shortTimeoutMs: Long = 5_000,
+    /** Quanto esperar a reconexão automática quando a conexão cai no meio da instalação. */
+    private val reconnectWaitMs: Long = 45_000,
 ) {
     private val _faces = MutableStateFlow<List<InstalledFace>?>(null)
 
@@ -89,6 +93,10 @@ class WatchfaceManager(
      * no meio (quem escreve no Bluetooth é o enlace, quadro inteiro por vez). Ao cancelar ou falhar
      * no meio do envio, a face não é ativada e a conexão é fechada, para a banda descartar a
      * sessão de envio incompleta.
+     *
+     * Queda da conexão: a Mi Band 10 real fecha o RFCOMM de vez em quando. Se o [BandClient]
+     * reconectar sozinho, o envio recomeça com os mesmos pedidos 4/4 e 22/0, e a banda diz de onde
+     * continuar (resumePosition, como no Gadgetbridge). Até [MAX_RESUMES] vezes.
      */
     suspend fun install(
         file: FaceFile.V2,
@@ -108,6 +116,61 @@ class WatchfaceManager(
         }
         if (faces.size >= MAX_FACES) throw BandFullException(faces.size)
 
+        checkInstallStatus(requestInstall(file, onProgress))
+        uploading {
+            var resumes = 0
+            while (true) {
+                val generation = client.connectionGeneration
+                try {
+                    if (resumes > 0) {
+                        val status = requestInstall(file, onProgress)
+                        // A banda pode ter terminado a instalação antes de a conexão cair.
+                        if (status == INSTALL_STATUS_ALREADY_INSTALLED) {
+                            log.info("Depois de reconectar, a banda diz que a face já está instalada")
+                            break
+                        }
+                        checkInstallStatus(status)
+                    }
+                    upload(file.bytes, onProgress)
+                    break
+                } catch (e: Exception) {
+                    if (!isConnectionLoss(e) || resumes >= MAX_RESUMES) throw e
+                    resumes++
+                    log.warn("A conexão caiu durante o envio (${e.message}). Esperando a reconexão para continuar ($resumes de $MAX_RESUMES)")
+                    awaitReconnection(generation, onProgress, "continuar o envio")
+                }
+            }
+        }
+
+        var resumes = 0
+        while (true) {
+            val generation = client.connectionGeneration
+            try {
+                confirmAndActivate(file, onProgress)
+                return
+            } catch (e: Exception) {
+                if (!isConnectionLoss(e) || resumes >= MAX_RESUMES) throw e
+                resumes++
+                log.warn("A conexão caiu ao confirmar a instalação (${e.message}). Esperando a reconexão")
+                awaitReconnection(generation, onProgress, "conferir a instalação")
+            }
+        }
+    }
+
+    /** Queda do Bluetooth (reconectável). Um NACK repetido não é queda: a banda recusou os dados. */
+    private fun isConnectionLoss(e: Exception): Boolean =
+        e !is NackException && (e is LinkException || e is NotConnectedException || e is java.io.IOException)
+
+    private suspend fun awaitReconnection(generation: Int, onProgress: (InstallProgress) -> Unit, toDo: String) {
+        onProgress(InstallProgress("A conexão caiu. Reconectando para $toDo…", null))
+        if (!client.awaitReconnection(generation, reconnectWaitMs)) {
+            throw InstallException("A conexão caiu durante a instalação e não voltou. A face não foi ativada; tente de novo.")
+        }
+        log.info("Reconectado: retomando para $toDo")
+    }
+
+    /** Pedido de instalação (4/4). Retorna o installStatus da banda. */
+    private suspend fun requestInstall(file: FaceFile.V2, onProgress: (InstallProgress) -> Unit): Int {
         onProgress(InstallProgress("Pedindo a instalação…", null))
         val start = client.request(
             Command.newBuilder().setType(Commands.WATCHFACE).setSubtype(Commands.WATCHFACE_INSTALL)
@@ -118,16 +181,18 @@ class WatchfaceManager(
                 ).build(),
             "pedido de instalação",
         ) { it.isA(Commands.WATCHFACE, Commands.WATCHFACE_INSTALL) }
-        when (val status = start.watchface.installStatus) {
+        return start.watchface.installStatus
+    }
+
+    private fun checkInstallStatus(status: Int) {
+        when (status) {
             0 -> Unit
-            2 -> throw InstallException("A banda diz que esta face já está instalada (installStatus 2). Remova a versão antiga.")
+            INSTALL_STATUS_ALREADY_INSTALLED -> throw InstallException("A banda diz que esta face já está instalada (installStatus 2). Remova a versão antiga.")
             else -> throw InstallException("A banda recusou a instalação (installStatus $status).")
         }
+    }
 
-        uploading {
-            upload(file.bytes, onProgress)
-        }
-
+    private suspend fun confirmAndActivate(file: FaceFile.V2, onProgress: (InstallProgress) -> Unit) {
         onProgress(InstallProgress("Confirmando a instalação…", 1f))
         delay(settleDelayMs)
         var installed = false
@@ -248,5 +313,10 @@ class WatchfaceManager(
          * é o valor informado na especificação do app.
          */
         const val MAX_FACES = 10
+
+        /** Quantas vezes o envio continua depois de uma queda da conexão. */
+        const val MAX_RESUMES = 5
+
+        private const val INSTALL_STATUS_ALREADY_INSTALLED = 2
     }
 }

@@ -157,6 +157,39 @@ class WatchfaceInstallTest {
     }
 
     @Test
+    fun resumesUploadAfterAutomaticReconnection() = runBlocking {
+        val band = FaceBand(key).apply {
+            chunkSize = 512
+            resumable = true
+        }
+        val client = BandClient(
+            PacketLog(), companion, config, requestTimeoutMs = 2_000, keepAliveIdleMs = 0,
+            reconnectDelaysMs = listOf(50, 50, 50),
+        )
+        client.connect({ band.newTransport() }, key, autoReconnect = true)
+        val manager = WatchfaceManager(client, PacketLog(), settleDelayMs = 50, shortTimeoutMs = 1_000, reconnectWaitMs = 10_000)
+        var dropped = false
+        band.onPart = { index, total ->
+            assertTrue("arquivo pequeno demais para o teste", total > 4)
+            if (index == 3 && !dropped) {
+                dropped = true
+                band.transport.silent = true
+                band.transport.dropConnection()
+            }
+        }
+        val stages = mutableListOf<String>()
+        manager.install(face, replaceExisting = false) { stages += it.stage }
+        assertTrue(dropped)
+        assertEquals(2, band.connections)
+        // A banda pediu para continuar do byte em que parou, e o arquivo chegou inteiro e conferido.
+        assertEquals(3 * (512 - 4) - 22, band.lastResumePosition)
+        assertEquals(true, band.uploadOk)
+        assertTrue(band.faces.any { it.id == "300" && it.active })
+        assertTrue(stages.any { it.contains("Reconectando") })
+        client.disconnect()
+    }
+
+    @Test
     fun connectionLossDuringUploadIsReported() = runBlocking {
         val band = FaceBand(key).apply { chunkSize = 512 }
         val (client, manager) = connected(band)

@@ -31,6 +31,17 @@ class FaceBand(authKey: ByteArray) : FakeBand(authKey) {
     var chunkSize: Int? = 1024
     var uploadErrno = 0
 
+    /** Se true, a banda guarda o que já recebeu e pede para retomar daí (resumePosition). */
+    var resumable = false
+
+    /** resumePosition mandado na última resposta 22/0. */
+    @Volatile
+    var lastResumePosition = 0
+        private set
+
+    /** Bytes do arquivo recebidos em conexões anteriores (retomada). */
+    private var filePrefix = ByteArray(0)
+
     /** Chamado quando a banda recebe a parte [index] (1-based). */
     var onPart: (index: Int, total: Int) -> Unit = { _, _ -> }
 
@@ -59,6 +70,7 @@ class FaceBand(authKey: ByteArray) : FakeBand(authKey) {
                 val start = command.watchface.watchfaceInstallStart
                 val status = if (faces.any { it.id == start.id }) 2 else 0
                 if (status == 0) {
+                    if (start.id != pendingId) filePrefix = ByteArray(0)
                     pendingId = start.id
                     pendingSize = start.size
                 }
@@ -68,9 +80,20 @@ class FaceBand(authKey: ByteArray) : FakeBand(authKey) {
                 val request = command.dataUpload.dataUploadRequest
                 check(request.type == 16) { "tipo de upload ${request.type}" }
                 check(request.size == pendingSize) { "tamanho diferente do pedido de instalação" }
+                if (resumable) {
+                    // Guarda os bytes do arquivo que chegaram antes da queda (o payload começa com 22 bytes de cabeçalho).
+                    val previous = upload.toByteArray()
+                    if (previous.size > HEADER) {
+                        val got = previous.copyOfRange(HEADER, minOf(previous.size, HEADER + pendingSize - filePrefix.size))
+                        filePrefix += got
+                    }
+                } else {
+                    filePrefix = ByteArray(0)
+                }
                 upload.reset()
                 uploadOk = null
-                val ack = DataUploadAck.newBuilder().setErrno(uploadErrno).setResumePosition(0)
+                lastResumePosition = filePrefix.size
+                val ack = DataUploadAck.newBuilder().setErrno(uploadErrno).setResumePosition(filePrefix.size)
                 chunkSize?.let { ack.setChunkSize(it) }
                 reply(Command.newBuilder().setType(22).setSubtype(0).setDataUpload(DataUpload.newBuilder().setDataUploadAck(ack)).build())
             }
@@ -97,7 +120,8 @@ class FaceBand(authKey: ByteArray) : FakeBand(authKey) {
             val md5 = ByteArray(16).also { p.get(it) }
             val size = p.int
             check(size == pendingSize)
-            val file = ByteArray(size).also { p.get(it) }
+            val tail = ByteArray(size - filePrefix.size).also { p.get(it) }
+            val file = filePrefix + tail
             val crc = p.int.toLong() and 0xffffffffL
             check(!p.hasRemaining())
             check(MessageDigest.getInstance("MD5").digest(file).contentEquals(md5))
@@ -105,6 +129,11 @@ class FaceBand(authKey: ByteArray) : FakeBand(authKey) {
         }.isSuccess
         uploadOk = ok
         if (ok) faces += Face(pendingId!!, "Nova face", active = false, canDelete = true)
+    }
+
+    private companion object {
+        /** 00 | tipo | md5 (16) | tamanho (4) */
+        const val HEADER = 22
     }
 
     private fun sendList() {

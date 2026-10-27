@@ -27,8 +27,18 @@ import javax.crypto.spec.SecretKeySpec
  */
 open class FakeBand(
     private val authKey: ByteArray,
-    val transport: FakeBandTransport = FakeBandTransport(),
+    transport: FakeBandTransport = FakeBandTransport(),
 ) {
+    /** Transporte da conexão atual (troca a cada [newTransport]). */
+    @Volatile
+    var transport: FakeBandTransport = transport
+        private set
+
+    /** Quantas conexões o celular abriu (via [newTransport]). */
+    @Volatile
+    var connections = 0
+        private set
+
     /** Se true, a banda responde NO_BOUND (código 4) ao passo 1, como na captura real. */
     var refuseNoBound = false
 
@@ -49,7 +59,21 @@ open class FakeBand(
     private var hostEncNonce = ByteArray(0)
 
     init {
-        transport.onData = { channel, opcode, body -> onData(channel, opcode, body) }
+        wire(transport)
+    }
+
+    private fun wire(t: FakeBandTransport) {
+        t.onData = { channel, opcode, body -> onData(channel, opcode, body) }
+    }
+
+    /** Nova conexão (para testar a reconexão): transporte novo e autenticação do zero. */
+    fun newTransport(): FakeBandTransport {
+        authenticated = false
+        connections++
+        return FakeBandTransport().also {
+            wire(it)
+            transport = it
+        }
     }
 
     private fun hmac(key: ByteArray, data: ByteArray): ByteArray =

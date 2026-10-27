@@ -22,6 +22,7 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 - [x] Instalação: pedido 4/4, envio 22/0 em partes **esperando o ACK de cada parte**, barra de progresso, confirmação pela lista e ativação
 - [x] Erros tratados: desconexão, timeout sem ACK, NACK repetido, face já instalada (remove a versão antiga se você confirmar), banda cheia (10 faces), recusa da banda (`installStatus`/`errno`)
 - [x] Cancelamento seguro: para entre duas partes, não ativa a face e fecha a conexão
+- [x] Reconexão automática se a banda derrubar a conexão, com retomada do envio da face (resumePosition)
 - [x] Lista das faces instaladas, com ativar e remover
 - [x] Log detalhado dos pacotes TX/RX (copiar/compartilhar); a chave nunca aparece no log
 
@@ -55,7 +56,7 @@ A Mi Band 10 só aceita uma conexão serial por vez, e o Mi Fitness costuma mant
 
 ### Se a conexão cair sozinha
 
-Enquanto conectado, o app mostra uma notificação "Conectado à banda" (serviço em primeiro plano, como o Gadgetbridge): ela impede que o Android congele o app em segundo plano e derrube a conexão, e permite que um envio de face de vários minutos termine com o app em segundo plano. A banda fecha a conexão depois de ~1 minuto sem tráfego; por isso, com a conexão parada, o app pede a bateria a cada 20 s (linhas `Conexão parada há … pedindo a bateria` no log). Se ainda cair, copie a aba **Logs**: as linhas `Bluetooth (ACL):` dizem se o rádio caiu e por qual transporte, e a linha `Enlace encerrado (conexão durou …)` mostra quanto tempo a conexão viveu.
+Enquanto conectado, o app mostra uma notificação "Conectado à banda" (serviço em primeiro plano, como o Gadgetbridge): ela impede que o Android congele o app em segundo plano e derrube a conexão, e permite que um envio de face de vários minutos termine com o app em segundo plano. A banda fecha a conexão depois de ~1 minuto sem tráfego; por isso, com a conexão parada, o app pede a bateria a cada 20 s (linhas `Conexão parada há … pedindo a bateria` no log). Mesmo assim a Mi Band 10 real às vezes fecha o canal serial (~50 s depois de conectar); quando isso acontece o app **reconecta sozinho** (até 3 tentativas) e, se uma face estava sendo enviada, o envio continua do ponto em que a banda parou. Se ainda cair, copie a aba **Logs**: as linhas `Bluetooth (ACL):` dizem se o rádio caiu e por qual transporte, e a linha `Enlace encerrado (conexão durou …)` mostra quanto tempo a conexão viveu.
 
 ### Onde fica a chave
 

@@ -18,13 +18,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.security.SecureRandom
 import java.util.Calendar
 import java.util.concurrent.CopyOnWriteArrayList
@@ -68,7 +71,16 @@ class BandClient(
      * wakeLink do Gadgetbridge) para mantê-la viva. 0 desliga.
      */
     private val keepAliveIdleMs: Long = 20_000,
+    /**
+     * Esperas antes de cada tentativa de reconexão automática depois de uma queda. A banda real
+     * fechou o RFCOMM de vez em quando (~50–60 s depois de conectar), então o app reconecta
+     * sozinho, como o Gadgetbridge. Depois de uma reconexão bem-sucedida a contagem recomeça.
+     */
+    private val reconnectDelaysMs: List<Long> = listOf(1_000, 3_000, 6_000),
 ) {
+    /** O que é preciso para reconectar sozinho: como criar um transporte novo e a chave. */
+    private class Session(val newTransport: () -> BandTransport, val authKey: ByteArray)
+
     private class Waiter(val match: (Command) -> Boolean, val reply: CompletableDeferred<Command>)
 
     private val _state = MutableStateFlow<BandState>(BandState.Disconnected)
@@ -84,6 +96,15 @@ class BandClient(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var keepAliveJob: Job? = null
 
+    @Volatile
+    private var session: Session? = null
+    private var reconnectJob: Job? = null
+
+    /** Aumenta a cada conexão autenticada; serve para saber se uma reconexão já aconteceu. */
+    @Volatile
+    var connectionGeneration = 0
+        private set
+
     /** Último pacote enviado ou recebido (para o keep-alive). */
     @Volatile
     private var lastActivityAt = 0L
@@ -93,10 +114,43 @@ class BandClient(
 
     val isReady: Boolean get() = _state.value is BandState.Ready
 
-    /** Conecta, negocia o SPP V2 e autentica com a [authKey] de 16 bytes. */
-    suspend fun connect(transport: BandTransport, authKey: ByteArray) {
+    /** Conecta uma vez (sem reconexão automática), negocia o SPP V2 e autentica com a [authKey]. */
+    suspend fun connect(transport: BandTransport, authKey: ByteArray) =
+        connect({ transport }, authKey, autoReconnect = false)
+
+    /**
+     * Conecta, negocia o SPP V2 e autentica com a [authKey] de 16 bytes. Com [autoReconnect], se a
+     * conexão cair sem o usuário pedir, o cliente cria outro transporte com [newTransport] e
+     * reconecta sozinho, até [disconnect] ser chamado.
+     */
+    suspend fun connect(newTransport: () -> BandTransport, authKey: ByteArray, autoReconnect: Boolean) {
         require(authKey.size == 16) { "a auth key deve ter 16 bytes" }
         disconnect()
+        session = if (autoReconnect) Session(newTransport, authKey.copyOf()) else null
+        try {
+            establish(newTransport(), authKey, announceFailure = true)
+        } catch (e: Exception) {
+            session = null
+            throw e
+        }
+    }
+
+    /**
+     * Espera uma conexão autenticada mais nova que [afterGeneration] (isto é, uma reconexão).
+     * Retorna false se o cliente desistir (sem reconexão automática, usuário desconectou ou as
+     * tentativas acabaram) ou se passar [timeoutMs].
+     */
+    suspend fun awaitReconnection(afterGeneration: Int, timeoutMs: Long): Boolean {
+        val state = withTimeoutOrNull(timeoutMs) {
+            _state.first {
+                (it is BandState.Ready && connectionGeneration > afterGeneration) ||
+                    it is BandState.Failed || it is BandState.Disconnected
+            }
+        }
+        return state is BandState.Ready
+    }
+
+    private suspend fun establish(transport: BandTransport, authKey: ByteArray, announceFailure: Boolean) {
         val newLink = XiaomiLink(transport, log, linkConfig)
         link = newLink
         try {
@@ -108,6 +162,7 @@ class BandClient(
             // Antes de anunciar Ready, para que nenhum outro comando passe na frente.
             syncTime()
             if (link !== newLink || !newLink.isOpen) throw NotConnectedException()
+            connectionGeneration++
             _state.value = BandState.Ready(transport.description)
             log.info("Pronto: autenticado por ${transport.description}")
             startKeepAlive(newLink)
@@ -116,14 +171,19 @@ class BandClient(
             if (link === newLink) link = null
             newLink.close()
             failAllWaiters(e)
-            _state.value = BandState.Failed(e.message ?: e.javaClass.simpleName)
+            if (announceFailure) _state.value = BandState.Failed(e.message ?: e.javaClass.simpleName)
             throw e
         }
         refreshInfo()
     }
 
+    /** Desconecta a pedido do usuário (ou do app) e desliga a reconexão automática. */
     fun disconnect() {
+        session = null
+        reconnectJob?.cancel()
+        reconnectJob = null
         keepAliveJob?.cancel()
+        if (_state.value is BandState.Connecting && link == null) _state.value = BandState.Disconnected
         val old = link ?: return
         link = null
         old.close()
@@ -148,6 +208,36 @@ class BandClient(
                     if (!owner.isOpen) break
                     log.warn("Keep-alive falhou: ${e.message}")
                 }
+            }
+        }
+    }
+
+    /** Reconecta depois de uma queda, com algumas tentativas; desiste com o estado Failed. */
+    private fun startReconnect(s: Session, cause: String) {
+        reconnectJob?.cancel()
+        reconnectJob = scope.launch {
+            var lastError = cause
+            for ((index, wait) in reconnectDelaysMs.withIndex()) {
+                val attempt = index + 1
+                _state.value = BandState.Connecting("A conexão caiu. Reconectando (tentativa $attempt de ${reconnectDelaysMs.size})…")
+                delay(wait)
+                if (session !== s) return@launch
+                log.info("Reconexão automática: tentativa $attempt de ${reconnectDelaysMs.size}")
+                try {
+                    establish(s.newTransport(), s.authKey, announceFailure = false)
+                    log.info("Reconectado")
+                    return@launch
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    lastError = e.message ?: e.javaClass.simpleName
+                    log.warn("Reconexão $attempt falhou: $lastError")
+                    if (e is AuthException) break
+                }
+            }
+            if (session === s) {
+                session = null
+                _state.value = BandState.Failed("A conexão caiu e não consegui reconectar: $lastError")
             }
         }
     }
@@ -314,11 +404,19 @@ class BandClient(
 
         override fun onClosed(cause: Throwable?) {
             if (link !== owner) return
+            // Caiu no meio da conexão/autenticação: quem trata é o establish(), que vai falhar.
+            val wasReady = _state.value is BandState.Ready
             link = null
             keepAliveJob?.cancel()
             val error = cause as? Exception ?: NotConnectedException()
             failAllWaiters(error)
-            _state.value = if (cause != null) BandState.Failed(cause.message ?: "Conexão perdida") else BandState.Disconnected
+            val s = session
+            when {
+                !wasReady -> Unit
+                cause == null -> _state.value = BandState.Disconnected
+                s != null -> startReconnect(s, cause.message ?: "Conexão perdida")
+                else -> _state.value = BandState.Failed(cause.message ?: "Conexão perdida")
+            }
         }
     }
 }

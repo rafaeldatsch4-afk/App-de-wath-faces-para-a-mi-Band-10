@@ -34,6 +34,7 @@ a5 a5 | tipo (4 bits baixos) | seq (1) | tamanho (2, LE) | CRC-16/ARC do payload
 - **ACK/NACK:** sequência de 8 bits que dá a volta. ACKs são cumulativos. A banda aceita quadros estritamente em ordem (go-back-N): `NACK(n)` = "estou esperando o quadro n". Todo quadro DATA recebido da banda deve ser respondido com `ACK(seq)`.
 - Reenvio após 10 s sem ACK; após 3 timeouts seguidos a conexão é considerada morta.
 - **Conexão parada:** na Mi Band 10 real, a banda fechou o RFCOMM depois de ~60 s sem nenhum tráfego (medido: 57,5 s e 62,5 s sem RX/TX). Por isso o app pede a bateria (`2/1`, comando inofensivo) quando a conexão fica 20 s parada. Não está no Gadgetbridge, que normalmente tem tráfego constante (notificações, atividade).
+- **Quedas mesmo com tráfego:** com o keep-alive, a banda ainda fechou o RFCOMM uma vez 48 s depois de conectar (2 s depois de uma resposta normal). A causa não está clara (a banda manda pedidos que o app não responde: 2/42, 18/0 música, 17/7, 10/3 clima). O app reconecta sozinho e, no envio de face, repete 4/4 e 22/0: a banda responde com `resumePosition` e o envio continua dali (o mesmo campo que o Gadgetbridge usa).
 
 ## 4. Autenticação (`XiaomiAuthService`)
 

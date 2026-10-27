@@ -308,7 +308,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 scanner.stop()
                 // Serviço em primeiro plano: evita que o Android congele o app e derrube a conexão.
                 if (!ConnectionService.start(getApplication())) log.warn("Não consegui iniciar o serviço em primeiro plano; a conexão pode cair em segundo plano")
-                client.connect(createTransport(address), AuthKey.toBytes(key))
+                client.connect({ createTransport(address) }, AuthKey.toBytes(key), autoReconnect = true)
             } catch (e: SecurityException) {
                 _message.value = "Permissão de Bluetooth negada"
             } catch (e: Exception) {

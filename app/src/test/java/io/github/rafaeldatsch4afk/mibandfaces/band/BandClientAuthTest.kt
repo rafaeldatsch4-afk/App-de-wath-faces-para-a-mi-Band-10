@@ -3,6 +3,7 @@ package io.github.rafaeldatsch4afk.mibandfaces.band
 import io.github.rafaeldatsch4afk.mibandfaces.log.PacketLog
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.LinkConfig
 import io.github.rafaeldatsch4afk.mibandfaces.testutil.FakeBand
+import io.github.rafaeldatsch4afk.mibandfaces.testutil.FakeBandTransport
 import io.github.rafaeldatsch4afk.mibandfaces.util.hexToBytes
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -16,6 +17,58 @@ class BandClientAuthTest {
     private val config = LinkConfig(resendTimeoutMs = 300, versionProbeTimeoutMs = 1_000, sessionTimeoutMs = 1_000)
 
     private fun client() = BandClient(PacketLog(), companion, config, requestTimeoutMs = 2_000)
+
+    private fun reconnectingClient() = BandClient(
+        PacketLog(), companion, config, requestTimeoutMs = 2_000, keepAliveIdleMs = 0,
+        reconnectDelaysMs = listOf(50, 50, 50),
+    )
+
+    @Test
+    fun reconnectsAutomaticallyWhenTheBandDrops() = runBlocking {
+        val band = FakeBand(key)
+        val client = reconnectingClient()
+        client.connect({ band.newTransport() }, key, autoReconnect = true)
+        val generation = client.connectionGeneration
+        band.transport.dropConnection()
+        assertTrue("não reconectou", client.awaitReconnection(generation, 10_000))
+        assertTrue(client.isReady)
+        assertEquals(2, band.connections)
+        assertTrue(band.authenticated)
+        // A conexão nova funciona.
+        client.refreshInfo()
+        assertEquals(77, client.info.value.batteryPercent)
+        client.disconnect()
+        assertEquals(BandState.Disconnected, client.state.value)
+    }
+
+    @Test
+    fun givesUpReconnectingAfterFailedAttempts() = runBlocking {
+        val band = FakeBand(key)
+        val client = reconnectingClient()
+        var created = 0
+        client.connect({
+            created++
+            // Da segunda vez em diante a banda não responde (fora de alcance).
+            if (created == 1) band.newTransport() else FakeBandTransport().apply { silent = true }
+        }, key, autoReconnect = true)
+        val generation = client.connectionGeneration
+        band.transport.dropConnection()
+        assertEquals(false, client.awaitReconnection(generation, 15_000))
+        val state = client.state.value
+        assertTrue("$state", state is BandState.Failed && state.message.contains("reconectar"))
+        assertEquals(4, created)
+    }
+
+    @Test
+    fun doesNotReconnectAfterUserDisconnects() = runBlocking {
+        val band = FakeBand(key)
+        val client = reconnectingClient()
+        client.connect({ band.newTransport() }, key, autoReconnect = true)
+        client.disconnect()
+        kotlinx.coroutines.delay(300)
+        assertEquals(BandState.Disconnected, client.state.value)
+        assertEquals(1, band.connections)
+    }
 
     @Test
     fun authenticatesAndReadsInfo() = runBlocking {

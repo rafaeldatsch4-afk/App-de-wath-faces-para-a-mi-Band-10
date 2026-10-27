@@ -57,8 +57,9 @@ class AclLogger(
             addAction(BluetoothDevice.ACTION_ACL_DISCONNECT_REQUESTED)
             addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
         }
-        // São broadcasts do sistema: NOT_EXPORTED impede que outro app forje esses eventos.
-        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        // EXPORTED: quem manda esses broadcasts é o app de Bluetooth do sistema (outro UID), e com
+        // NOT_EXPORTED eles não chegavam. São broadcasts protegidos: outros apps não conseguem forjá-los.
+        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_EXPORTED)
         registered = true
     }
 }
