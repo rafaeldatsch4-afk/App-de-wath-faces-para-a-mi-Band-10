@@ -49,6 +49,10 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 
 Privacidade: a senha só é digitada na página da Xiaomi. O app guarda a sessão apenas na memória durante a busca e a descarta; os tokens nunca vão para o log. Esse é o **único** recurso que usa a internet (permissão `INTERNET`); o envio das faces é todo por Bluetooth.
 
+### Se a conexão falhar ("Falha ao abrir o RFCOMM")
+
+A Mi Band 10 só aceita uma conexão serial por vez, e o Mi Fitness costuma mantê-la aberta em segundo plano (e reconecta sozinho). Feche-o **à força** (Configurações → Apps → Mi Fitness → Forçar parada, ou tire a permissão "Dispositivos próximos") e toque em *Conectar* logo em seguida. O app tenta 3 vezes e mostra o erro real na aba **Logs** (linhas `SPP:`).
+
 ### Onde fica a chave
 
 - **Android:** logs do Mi Fitness em `Android/data/com.mi.health/files/log/` (ou `com.xiaomi.wearable`). No Android 11+ essa pasta não aparece para outros apps: copie pelo computador (USB/`adb pull`) ou por um gerenciador de arquivos com acesso. Use a **última** chave do arquivo.

@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import io.github.rafaeldatsch4afk.mibandfaces.log.PacketLog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -41,22 +42,40 @@ class SppTransport(
         // A busca de dispositivos atrapalha (e muito) a abertura do RFCOMM.
         adapter.cancelDiscovery()
         closedByUs = false
-        val s = try {
-            device.createRfcommSocketToServiceRecord(SPP_UUID)
-        } catch (e: IOException) {
-            throw TransportException("Não foi possível criar o socket RFCOMM", e)
+        // O RFCOMM falha com frequência na primeira tentativa (e enquanto outro app, como o Mi Fitness,
+        // segura a conexão serial da banda). Tenta algumas vezes e registra o erro real de cada uma.
+        var opened: BluetoothSocket? = null
+        var lastError: IOException? = null
+        for (attempt in 1..MAX_ATTEMPTS) {
+            val s = try {
+                device.createRfcommSocketToServiceRecord(SPP_UUID)
+            } catch (e: IOException) {
+                throw TransportException("Não foi possível criar o socket RFCOMM: ${describe(e)}", e)
+            }
+            log.info("SPP: conectando ao RFCOMM ($SPP_UUID), tentativa $attempt de $MAX_ATTEMPTS")
+            try {
+                s.connect()
+                opened = s
+                break
+            } catch (e: IOException) {
+                runCatching { s.close() }
+                lastError = e
+                log.warn("SPP: tentativa $attempt falhou: ${describe(e)}")
+                if (attempt < MAX_ATTEMPTS) delay(RETRY_PAUSE_MS)
+            }
         }
-        log.info("SPP: conectando ao RFCOMM ($SPP_UUID)")
-        try {
-            s.connect()
-        } catch (e: IOException) {
-            runCatching { s.close() }
-            throw TransportException("Falha ao abrir o RFCOMM. A banda está perto, ligada e com o Mi Fitness fechado?", e)
-        }
+        val s = opened ?: throw TransportException(
+            "Não consegui abrir a porta serial da banda (RFCOMM): ${describe(lastError!!)}. " +
+                "Provavelmente o Mi Fitness está segurando a conexão: feche-o à força " +
+                "(Configurações → Apps → Mi Fitness → Forçar parada) e tente de novo.",
+            lastError,
+        )
         socket = s
         log.info("SPP: RFCOMM conectado")
         startReader(s, listener)
     }
+
+    private fun describe(e: IOException) = "${e.javaClass.simpleName}: ${e.message ?: "sem detalhe"}"
 
     private fun startReader(s: BluetoothSocket, listener: BandTransport.Listener) {
         Thread({
@@ -95,6 +114,9 @@ class SppTransport(
     }
 
     companion object {
+        private const val MAX_ATTEMPTS = 3
+        private const val RETRY_PAUSE_MS = 2_000L
+
         /** UUID padrão do Serial Port Profile (XiaomiUuids.UUID_SERVICE_SERIAL_PORT_PROFILE). */
         val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb")
     }
