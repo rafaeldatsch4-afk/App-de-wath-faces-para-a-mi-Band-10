@@ -3,18 +3,13 @@ package io.github.rafaeldatsch4afk.mibandfaces
 import android.app.Application
 import android.bluetooth.BluetoothManager
 import android.net.Uri
-import android.os.Build
 import android.provider.OpenableColumns
-import android.text.format.DateFormat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import io.github.rafaeldatsch4afk.mibandfaces.band.BandClient
 import io.github.rafaeldatsch4afk.mibandfaces.band.BandState
-import io.github.rafaeldatsch4afk.mibandfaces.band.CompanionInfo
 import io.github.rafaeldatsch4afk.mibandfaces.band.FaceAlreadyInstalledException
 import io.github.rafaeldatsch4afk.mibandfaces.band.InstallProgress
 import io.github.rafaeldatsch4afk.mibandfaces.band.InstalledFace
-import io.github.rafaeldatsch4afk.mibandfaces.band.WatchfaceManager
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BandScanner
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BandTransport
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BleTransport
@@ -32,7 +27,6 @@ import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKey
 import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKeyImporter
 import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKeyStore
 import io.github.rafaeldatsch4afk.mibandfaces.key.KeyCandidate
-import io.github.rafaeldatsch4afk.mibandfaces.log.PacketLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -45,25 +39,18 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.Locale
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
-    val log = PacketLog()
+    // Conexão, log e lista de faces ficam no processo (AppContainer), não aqui: o ConnectionService
+    // as mantém vivas com o app em segundo plano.
+    private val container = (app as App).container
+    val log = container.log
     private val settings = Settings(app)
     private val adapter = app.getSystemService(BluetoothManager::class.java)?.adapter
     val scanner = BandScanner(app, adapter, log)
-    val client = BandClient(
-        log,
-        CompanionInfo(
-            apiLevel = Build.VERSION.SDK_INT,
-            phoneModel = Build.MODEL ?: "Android",
-            // Mesmo critério do Gadgetbridge: as duas letras do idioma, em maiúsculas.
-            region = Locale.getDefault().language.take(2).uppercase(Locale.ROOT).ifEmpty { "EN" },
-        ),
-        is24HourFormat = { DateFormat.is24HourFormat(app) },
-    )
+    val client = container.client
     private val keyStore = AuthKeyStore(app)
-    val watchfaces = WatchfaceManager(client, log)
+    val watchfaces = container.watchfaces
 
     /** Chave salva (normalizada) ou null. Só a versão mascarada vai para a tela. */
     private val _savedKey = MutableStateFlow(keyStore.load())
@@ -114,7 +101,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     is BandState.Ready -> runCatching { watchfaces.refresh() }.onFailure {
                         log.warn("Não consegui ler a lista de faces: ${it.message}")
                     }
-                    is BandState.Disconnected, is BandState.Failed -> watchfaces.clear()
+                    is BandState.Disconnected, is BandState.Failed -> {
+                        watchfaces.clear()
+                        ConnectionService.stop(getApplication())
+                    }
                     else -> Unit
                 }
             }
@@ -316,6 +306,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 scanner.stop()
+                // Serviço em primeiro plano: evita que o Android congele o app e derrube a conexão.
+                if (!ConnectionService.start(getApplication())) log.warn("Não consegui iniciar o serviço em primeiro plano; a conexão pode cair em segundo plano")
                 client.connect(createTransport(address), AuthKey.toBytes(key))
             } catch (e: SecurityException) {
                 _message.value = "Permissão de Bluetooth negada"
@@ -457,8 +449,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        // A conexão NÃO é fechada aqui: ela pertence ao processo e ao ConnectionService.
         scanner.release()
-        client.disconnect()
     }
 
     private companion object {

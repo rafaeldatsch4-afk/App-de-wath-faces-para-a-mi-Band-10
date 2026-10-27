@@ -75,6 +75,13 @@ class XiaomiLink(
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val createdAt = System.currentTimeMillis()
+
+    @Volatile
+    private var lastRxAt = 0L
+
+    @Volatile
+    private var lastTxAt = 0L
     private val lock = Any()
     private val writeQueue = Channel<ByteArray>(Channel.UNLIMITED)
 
@@ -121,6 +128,7 @@ class XiaomiLink(
             for (frame in writeQueue) {
                 try {
                     transport.write(frame)
+                    lastTxAt = System.currentTimeMillis()
                 } catch (e: Exception) {
                     fail(LinkClosedException("Falha ao escrever na banda: ${e.message}", e))
                     break
@@ -218,6 +226,7 @@ class XiaomiLink(
     // ------------------------------------------------------------------ recepção ---
 
     override fun onData(bytes: ByteArray) {
+        lastRxAt = System.currentTimeMillis()
         log.rx("bytes", bytes)
         val deliveries = mutableListOf<Pair<Int, ByteArray>>()
         synchronized(lock) {
@@ -380,7 +389,11 @@ class XiaomiLink(
         if (mode == Mode.CLOSED) return
         mode = Mode.CLOSED
         val error = cause as? Exception ?: LinkClosedException(cause?.message ?: "Conexão encerrada", cause)
-        if (cause != null) log.error("Enlace encerrado", cause) else log.info("Enlace encerrado")
+        // Tempos para diagnóstico: há quanto tempo a conexão vivia e quando foi o último pacote.
+        val now = System.currentTimeMillis()
+        fun ago(t: Long) = if (t == 0L) "nunca" else "há ${(now - t) / 1000.0} s".replace('.', ',')
+        val timing = "conexão durou ${(now - createdAt) / 1000} s; último RX ${ago(lastRxAt)}, último TX ${ago(lastTxAt)}"
+        if (cause != null) log.error("Enlace encerrado ($timing)", cause) else log.info("Enlace encerrado ($timing)")
         versionReply?.completeExceptionally(error)
         sessionReply?.completeExceptionally(error)
         for (item in outstanding) {

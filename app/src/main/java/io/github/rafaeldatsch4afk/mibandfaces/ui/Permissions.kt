@@ -31,23 +31,35 @@ class PermissionGate(private val requestFn: (() -> Unit) -> Unit, val granted: (
     fun runWithPermission(action: () -> Unit) = requestFn(action)
 }
 
+/** Notificação (Android 13+): só para mostrar o aviso "conectado". Não é obrigatória. */
+private fun notificationPermissions(): Array<String> =
+    if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.POST_NOTIFICATIONS) else emptyArray()
+
 @Composable
 fun rememberPermissionGate(onDenied: () -> Unit): PermissionGate {
     val context = LocalContext.current
     var pending by remember { mutableStateOf<(() -> Unit)?>(null) }
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         val action = pending
         pending = null
-        if (result.values.all { it }) action?.invoke() else onDenied()
+        // Só o Bluetooth é obrigatório; recusar a notificação não impede de conectar.
+        if (hasBluetoothPermissions(context)) action?.invoke() else onDenied()
     }
     return remember(launcher) {
         PermissionGate(
             requestFn = { action ->
-                if (hasBluetoothPermissions(context)) {
+                val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+                val missing = (bluetoothPermissions() + notificationPermissions()).filter {
+                    ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED &&
+                        // A notificação é pedida uma única vez.
+                        (it != Manifest.permission.POST_NOTIFICATIONS || !prefs.getBoolean("asked_notifications", false))
+                }
+                if (missing.isEmpty()) {
                     action()
                 } else {
+                    if (Manifest.permission.POST_NOTIFICATIONS in missing) prefs.edit().putBoolean("asked_notifications", true).apply()
                     pending = action
-                    launcher.launch(bluetoothPermissions())
+                    launcher.launch(missing.toTypedArray())
                 }
             },
             granted = { hasBluetoothPermissions(context) },

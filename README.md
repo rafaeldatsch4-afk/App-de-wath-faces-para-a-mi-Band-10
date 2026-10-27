@@ -53,6 +53,10 @@ Privacidade: a senha só é digitada na página da Xiaomi. O app guarda a sessã
 
 A Mi Band 10 só aceita uma conexão serial por vez, e o Mi Fitness costuma mantê-la aberta em segundo plano (e reconecta sozinho). Feche-o **à força** (Configurações → Apps → Mi Fitness → Forçar parada, ou tire a permissão "Dispositivos próximos") e toque em *Conectar* logo em seguida. O app tenta 3 vezes e mostra o erro real na aba **Logs** (linhas `SPP:`).
 
+### Se a conexão cair sozinha
+
+Enquanto conectado, o app mostra uma notificação "Conectado à banda" (serviço em primeiro plano, como o Gadgetbridge): ela impede que o Android congele o app em segundo plano e derrube a conexão, e permite que um envio de face de vários minutos termine com o app em segundo plano. Se ainda cair, copie a aba **Logs**: as linhas `Bluetooth (ACL):` dizem se o rádio caiu e por qual transporte, e a linha `Enlace encerrado (conexão durou …)` mostra quanto tempo a conexão viveu.
+
 ### Onde fica a chave
 
 - **Android:** logs do Mi Fitness em `Android/data/com.mi.health/files/log/` (ou `com.xiaomi.wearable`). No Android 11+ essa pasta não aparece para outros apps: copie pelo computador (USB/`adb pull`) ou por um gerenciador de arquivos com acesso. Use a **última** chave do arquivo.
