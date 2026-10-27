@@ -45,7 +45,8 @@ sealed interface RpkFile {
         private const val MAX_UNPACKED = 64L * 1024 * 1024
         private const val MAX_FILES = 2_000
 
-        private val PACKAGE_REGEX = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")
+        /** Nem todo app usa o formato "com.exemplo.app": há pacotes reais como "Fruits_cut". */
+        private val PACKAGE_REGEX = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)*")
 
         /** Um .rpk é um ZIP: começa com "PK\u0003\u0004". */
         fun looksLikeRpk(bytes: ByteArray): Boolean =

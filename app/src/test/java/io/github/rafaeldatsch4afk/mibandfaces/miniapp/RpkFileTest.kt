@@ -27,6 +27,13 @@ class RpkFileTest {
     }
 
     @Test
+    fun acceptsPackageNameWithoutDots() {
+        // Pacote real de um jogo para a Mi Band 10.
+        val parsed = RpkFile.parse(RpkBuilder.build(manifest = RpkBuilder.manifest(packageName = "Fruits_cut")))
+        assertEquals("Fruits_cut", (parsed as RpkFile.Valid).packageName)
+    }
+
+    @Test
     fun warnsAboutOtherScreenWidthMissingEntryPageAndOtherDevices() {
         val parsed = RpkFile.parse(
             RpkBuilder.build(manifest = RpkBuilder.manifest(designWidth = 192, deviceType = "phone"), withEntryPage = false),
