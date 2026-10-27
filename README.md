@@ -2,7 +2,7 @@
 
 App Android (Kotlin + Jetpack Compose, tema escuro) para instalar watch faces e mini-apps (`.rpk`) na **Xiaomi Smart Band 10** direto do celular, sem usar o Mi Fitness para o envio. O protocolo foi portado do [Gadgetbridge](https://codeberg.org/Freeyourgadget/Gadgetbridge) e conferido com o [miband-hack](https://github.com/ptrinh/miband-hack).
 
-> ✅ **Testado com uma Mi Band 10 real** (M2459B1, firmware 3.2.7): login na conta Xiaomi, autenticação, acerto da hora, lista de faces e instalação de uma watch face funcionaram. A instalação de mini-apps `.rpk` ainda **não** foi testada na banda real (só contra a banda simulada dos testes). Leia [Riscos](#riscos) antes de usar e mande os logs da aba **Logs** se algo der errado.
+> ✅ **Testado com uma Mi Band 10 real** (M2459B1, firmware 3.2.7): login na conta Xiaomi, autenticação, acerto da hora, lista de faces, instalação de uma watch face e instalação de um mini-app `.rpk` (uma calculadora) funcionaram. Leia [Riscos](#riscos) antes de usar e mande os logs da aba **Logs** se algo der errado.
 
 Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 
@@ -24,7 +24,7 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 - [x] Cancelamento seguro: para entre duas partes, não ativa a face e fecha a conexão
 - [x] Reconexão automática se a banda derrubar a conexão, com retomada do envio da face (resumePosition)
 - [x] Lista das faces instaladas, com ativar e remover
-- [x] **Mini-apps `.rpk`** (apps Vela/QuickApp, como uma calculadora): validação do pacote (ZIP inteiro com CRC de cada arquivo, `manifest.json`, página inicial, largura de tela), ícone, instalação com o mesmo envio em partes (tipo 64), lista dos apps instalados e remoção. Portado do `XiaomiRpkService` do Gadgetbridge. **Ainda não testado na banda real**
+- [x] **Mini-apps `.rpk`** (apps Vela/QuickApp, como uma calculadora): validação do pacote (ZIP inteiro com CRC de cada arquivo, `manifest.json`, página inicial, largura de tela), ícone, instalação com o mesmo envio em partes (tipo 64), lista dos apps instalados e remoção. Portado do `XiaomiRpkService` do Gadgetbridge. Testado na banda real
 - [x] Log detalhado dos pacotes TX/RX (copiar/compartilhar); a chave nunca aparece no log
 
 ### Futuro (ainda não feito)
