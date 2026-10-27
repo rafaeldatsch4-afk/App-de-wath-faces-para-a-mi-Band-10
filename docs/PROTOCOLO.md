@@ -33,6 +33,7 @@ a5 a5 | tipo (4 bits baixos) | seq (1) | tamanho (2, LE) | CRC-16/ARC do payload
 - **DATA:** `canal (1) | opcode (1) | corpo`. Canal `1` = protobuf/autenticação, `2` = envio de arquivo, `5` = atividade. Opcode `1` = texto puro, `2` = cifrado.
 - **ACK/NACK:** sequência de 8 bits que dá a volta. ACKs são cumulativos. A banda aceita quadros estritamente em ordem (go-back-N): `NACK(n)` = "estou esperando o quadro n". Todo quadro DATA recebido da banda deve ser respondido com `ACK(seq)`.
 - Reenvio após 10 s sem ACK; após 3 timeouts seguidos a conexão é considerada morta.
+- **Conexão parada:** na Mi Band 10 real, a banda fechou o RFCOMM depois de ~60 s sem nenhum tráfego (medido: 57,5 s e 62,5 s sem RX/TX). Por isso o app pede a bateria (`2/1`, comando inofensivo) quando a conexão fica 20 s parada. Não está no Gadgetbridge, que normalmente tem tráfego constante (notificações, atividade).
 
 ## 4. Autenticação (`XiaomiAuthService`)
 

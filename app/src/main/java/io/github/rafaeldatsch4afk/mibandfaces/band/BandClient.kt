@@ -12,11 +12,18 @@ import io.github.rafaeldatsch4afk.mibandfaces.protocol.XiaomiCrypto
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.XiaomiLink
 import io.github.rafaeldatsch4afk.mibandfaces.util.toHexPreview
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import java.security.SecureRandom
 import java.util.Calendar
@@ -55,6 +62,12 @@ class BandClient(
     /** Se o celular usa formato 24 h (a banda segue a mesma preferência). */
     private val is24HourFormat: () -> Boolean = { true },
     private val clock: () -> Calendar = XiaomiClock::now,
+    /**
+     * Medido com a Mi Band 10 real: ela fecha a conexão depois de ~60 s sem nenhum tráfego. Se a
+     * conexão ficar este tempo parada, o app pede a bateria (comando inofensivo, o mesmo do
+     * wakeLink do Gadgetbridge) para mantê-la viva. 0 desliga.
+     */
+    private val keepAliveIdleMs: Long = 20_000,
 ) {
     private class Waiter(val match: (Command) -> Boolean, val reply: CompletableDeferred<Command>)
 
@@ -67,6 +80,13 @@ class BandClient(
     @Volatile
     private var link: XiaomiLink? = null
     private val waiters = CopyOnWriteArrayList<Waiter>()
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var keepAliveJob: Job? = null
+
+    /** Último pacote enviado ou recebido (para o keep-alive). */
+    @Volatile
+    private var lastActivityAt = 0L
 
     /** Chamado para cada comando recebido que nenhum pedido estava esperando. */
     var onUnsolicited: (Command) -> Unit = {}
@@ -90,7 +110,9 @@ class BandClient(
             if (link !== newLink || !newLink.isOpen) throw NotConnectedException()
             _state.value = BandState.Ready(transport.description)
             log.info("Pronto: autenticado por ${transport.description}")
+            startKeepAlive(newLink)
         } catch (e: Exception) {
+            keepAliveJob?.cancel()
             if (link === newLink) link = null
             newLink.close()
             failAllWaiters(e)
@@ -101,11 +123,33 @@ class BandClient(
     }
 
     fun disconnect() {
+        keepAliveJob?.cancel()
         val old = link ?: return
         link = null
         old.close()
         failAllWaiters(NotConnectedException())
         _state.value = BandState.Disconnected
+    }
+
+    /** Mantém a conexão viva enquanto ela for a atual: pede a bateria se ficar parada. */
+    private fun startKeepAlive(owner: XiaomiLink) {
+        keepAliveJob?.cancel()
+        if (keepAliveIdleMs <= 0) return
+        keepAliveJob = scope.launch {
+            val checkEvery = (keepAliveIdleMs / 4).coerceAtLeast(50)
+            while (link === owner && owner.isOpen) {
+                delay(checkEvery)
+                val idle = System.currentTimeMillis() - lastActivityAt
+                if (idle < keepAliveIdleMs || link !== owner) continue
+                log.debug("Conexão parada há ${idle / 1000} s: pedindo a bateria para mantê-la viva")
+                try {
+                    sendOn(owner, Commands.simple(Commands.SYSTEM, Commands.SYSTEM_BATTERY))
+                } catch (e: Exception) {
+                    if (!owner.isOpen) break
+                    log.warn("Keep-alive falhou: ${e.message}")
+                }
+            }
+        }
     }
 
     private suspend fun authenticate(l: XiaomiLink, authKey: ByteArray) {
@@ -209,8 +253,10 @@ class BandClient(
     }
 
     /** Envia bytes crus no canal de dados (partes do upload). Retorna quando a banda der ACK. */
-    internal suspend fun enqueueData(body: ByteArray) =
-        currentLink().enqueue(SppV2.CHANNEL_DATA, body, encrypt = false)
+    internal suspend fun enqueueData(body: ByteArray): Deferred<Unit> {
+        lastActivityAt = System.currentTimeMillis()
+        return currentLink().enqueue(SppV2.CHANNEL_DATA, body, encrypt = false)
+    }
 
     internal val linkWindow: Int get() = link?.effectiveWindow ?: 1
 
@@ -221,10 +267,12 @@ class BandClient(
         val encrypt = command.type != XiaomiAuth.COMMAND_TYPE
         val bytes = command.toByteArray()
         log.info("→ comando ${command.type}/${command.subtype}${if (encrypt) " (cifrado)" else ""}: ${bytes.toHexPreview()}")
+        lastActivityAt = System.currentTimeMillis()
         l.send(SppV2.CHANNEL_PROTOBUF, bytes, encrypt)
     }
 
     private fun onPacket(channel: Int, body: ByteArray) {
+        lastActivityAt = System.currentTimeMillis()
         if (channel != SppV2.CHANNEL_PROTOBUF) {
             log.debug("Pacote ignorado no canal $channel (${body.size} bytes)")
             return
@@ -267,6 +315,7 @@ class BandClient(
         override fun onClosed(cause: Throwable?) {
             if (link !== owner) return
             link = null
+            keepAliveJob?.cancel()
             val error = cause as? Exception ?: NotConnectedException()
             failAllWaiters(error)
             _state.value = if (cause != null) BandState.Failed(cause.message ?: "Conexão perdida") else BandState.Disconnected

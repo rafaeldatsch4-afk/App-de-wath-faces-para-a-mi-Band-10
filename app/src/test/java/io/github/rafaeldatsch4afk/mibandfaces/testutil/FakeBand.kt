@@ -38,7 +38,7 @@ open class FakeBand(
     var authenticated = false
         private set
 
-    val commandsReceived = mutableListOf<Command>()
+    val commandsReceived: MutableList<Command> = java.util.Collections.synchronizedList(mutableListOf())
 
     private var phoneNonce = ByteArray(0)
     private var bandNonce = ByteArray(0)

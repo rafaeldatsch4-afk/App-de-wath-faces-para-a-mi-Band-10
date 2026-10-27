@@ -69,6 +69,26 @@ class BandClientAuthTest {
     }
 
     @Test
+    fun keepsIdleConnectionAliveWithBatteryRequests() = runBlocking {
+        val band = FakeBand(key)
+        val client = BandClient(PacketLog(), companion, config, requestTimeoutMs = 2_000, keepAliveIdleMs = 200)
+        client.connect(band.transport, key)
+        band.transport.awaitIdle()
+        val before = synchronized(band.commandsReceived) { band.commandsReceived.count { it.type == 2 && it.subtype == 1 } }
+        kotlinx.coroutines.delay(1_200)
+        band.transport.awaitIdle()
+        val after = synchronized(band.commandsReceived) { band.commandsReceived.count { it.type == 2 && it.subtype == 1 } }
+        // Conexão parada: o app pede a bateria periodicamente para a banda não fechar o canal.
+        assertTrue("keep-alives enviados: ${after - before}", after - before >= 2)
+        assertTrue(client.state.value is BandState.Ready)
+        client.disconnect()
+        val stopped = synchronized(band.commandsReceived) { band.commandsReceived.size }
+        kotlinx.coroutines.delay(600)
+        // Depois de desconectar, o keep-alive para.
+        assertEquals(stopped, synchronized(band.commandsReceived) { band.commandsReceived.size })
+    }
+
+    @Test
     fun wrongKeyIsDetectedByHmac() = runBlocking {
         val band = FakeBand(key)
         val client = client()

@@ -55,7 +55,7 @@ A Mi Band 10 só aceita uma conexão serial por vez, e o Mi Fitness costuma mant
 
 ### Se a conexão cair sozinha
 
-Enquanto conectado, o app mostra uma notificação "Conectado à banda" (serviço em primeiro plano, como o Gadgetbridge): ela impede que o Android congele o app em segundo plano e derrube a conexão, e permite que um envio de face de vários minutos termine com o app em segundo plano. Se ainda cair, copie a aba **Logs**: as linhas `Bluetooth (ACL):` dizem se o rádio caiu e por qual transporte, e a linha `Enlace encerrado (conexão durou …)` mostra quanto tempo a conexão viveu.
+Enquanto conectado, o app mostra uma notificação "Conectado à banda" (serviço em primeiro plano, como o Gadgetbridge): ela impede que o Android congele o app em segundo plano e derrube a conexão, e permite que um envio de face de vários minutos termine com o app em segundo plano. A banda fecha a conexão depois de ~1 minuto sem tráfego; por isso, com a conexão parada, o app pede a bateria a cada 20 s (linhas `Conexão parada há … pedindo a bateria` no log). Se ainda cair, copie a aba **Logs**: as linhas `Bluetooth (ACL):` dizem se o rádio caiu e por qual transporte, e a linha `Enlace encerrado (conexão durou …)` mostra quanto tempo a conexão viveu.
 
 ### Onde fica a chave
 
