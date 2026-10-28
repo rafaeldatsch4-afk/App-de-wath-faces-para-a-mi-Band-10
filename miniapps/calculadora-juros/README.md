@@ -41,7 +41,15 @@ src/pages/index/index.ux   telas: principal (barras), teclado e resultado
 src/common/juros.js        lógica pura (digitação, validação, contas, formatação em reais)
 src/common/logo.png        ícone
 test/juros-check.mjs       conferência da lógica com node
+test/pagina-check.mjs      conferência da página: variáveis e funções do template, estilos e uma
+                           sequência de toques simulada até o resultado
 ```
+
+Para rodar bem na banda, a página usa só padrões vistos em mini-apps que já rodam numa Mi Band 10:
+propriedades simples no template (sem expressões), classes montadas no script, `for` sobre listas
+de objetos, e o gesto de voltar tratado como na calculadora que já rodou (`onBackPress` sempre
+retorna `true` e sai com `this.$app.exit()`). O `.rpk` é gerado em modo release (código minificado),
+como o Fruits_cut.
 
 ## Compilar
 

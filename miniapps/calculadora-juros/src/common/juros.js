@@ -74,7 +74,8 @@ function milhares(inteiro) {
 // Número para "R$ 1.234,56". Valores absurdos (juros compostos por muitos meses) viram aviso.
 export function reais(x) {
   if (!isFinite(x) || Math.abs(x) >= 1e15) return 'grande demais';
-  var centavos = Math.round(Math.abs(x) * 100);
+  // A folga evita que 1,005 (guardado como 1,00499…) vire 1,00.
+  var centavos = Math.round(Math.abs(x) * 100 + 1e-7);
   var inteiro = String(Math.floor(centavos / 100));
   var resto = String(centavos % 100);
   if (resto.length < 2) resto = '0' + resto;

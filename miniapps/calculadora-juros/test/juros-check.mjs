@@ -52,6 +52,8 @@ assert.equal(reais(r.parcela), 'R$ 100,00');
 // Formatação
 assert.equal(reais(1234567.891), 'R$ 1.234.567,89');
 assert.equal(reais(0.005), 'R$ 0,01');
+assert.equal(reais(1.005), 'R$ 1,01');
+assert.equal(reais(1.015), 'R$ 1,02');
 assert.equal(reais(calcular(999999999, 600, 100, 'composto').montante), 'grande demais');
 assert.equal(porcento(2.5), '2,5%');
 assert.equal(porcento(2), '2%');

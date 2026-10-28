@@ -10,7 +10,7 @@
   "scripts": {
     "build": "aiot build",
     "release": "aiot release",
-    "test": "node --no-warnings test/juros-check.mjs"
+    "test": "node --no-warnings test/juros-check.mjs && node --no-warnings test/pagina-check.mjs"
   },
   "devDependencies": {
     "aiot-toolkit": "2.0.5"

@@ -1,47 +1,47 @@
 <template>
   <div class="page">
     <!-- Tela principal: barras de Valor, Parcelas, Tipo de juros e Taxa, e o botão Calcular -->
-    <div class="tela" if="{{tela === 'principal'}}">
+    <div class="tela" if="{{telaPrincipal}}">
       <text class="app">Juros</text>
-      <div class="barra" onclick="abrir(0)">
+      <div class="barra" onclick="abrirValor">
         <text class="rotulo">Valor</text>
-        <text class="{{barras[0].cls}}">{{barras[0].texto}}</text>
+        <text class="{{valorCls}}">{{valorTexto}}</text>
       </div>
-      <div class="barra" onclick="abrir(1)">
+      <div class="barra" onclick="abrirParcelas">
         <text class="rotulo">Parcelas (vezes)</text>
-        <text class="{{barras[1].cls}}">{{barras[1].texto}}</text>
+        <text class="{{parcelasCls}}">{{parcelasTexto}}</text>
       </div>
       <div class="barra tipo">
         <text class="rotuloTipo">Tipo de juros</text>
         <div class="seg">
-          <div class="op {{tipo === 'simples' ? 'sel' : ''}}" onclick="escolher('simples')">
-            <text class="{{tipo === 'simples' ? 'opTextoSel' : 'opTexto'}}">Simples</text>
+          <div class="{{simplesCls}}" onclick="escolherSimples">
+            <text class="{{simplesTextoCls}}">Simples</text>
           </div>
-          <div class="op {{tipo === 'composto' ? 'sel' : ''}}" onclick="escolher('composto')">
-            <text class="{{tipo === 'composto' ? 'opTextoSel' : 'opTexto'}}">Composto</text>
+          <div class="{{compostoCls}}" onclick="escolherComposto">
+            <text class="{{compostoTextoCls}}">Composto</text>
           </div>
         </div>
       </div>
-      <div class="barra" onclick="abrir(2)">
+      <div class="barra" onclick="abrirTaxa">
         <text class="rotulo">Taxa de juros ao mês</text>
-        <text class="{{barras[2].cls}}">{{barras[2].texto}}</text>
+        <text class="{{taxaCls}}">{{taxaTexto}}</text>
       </div>
       <div class="espaco"></div>
-      <div class="calcular {{pronto ? '' : 'off'}}" onclick="calcularConta">
-        <text class="{{pronto ? 'calcularTexto' : 'calcularTextoOff'}}">Calcular</text>
+      <div class="{{calcularCls}}" onclick="calcularConta">
+        <text class="{{calcularTextoCls}}">Calcular</text>
       </div>
     </div>
 
     <!-- Teclado de um campo -->
-    <div class="tela" if="{{tela === 'teclado'}}">
+    <div class="tela" if="{{telaTeclado}}">
       <div class="topo">
         <text class="titulo">{{titulo}}</text>
-        <text class="digitado {{tamanho}}">{{mostrado}}</text>
-        <text class="{{erro ? 'erro' : 'dica'}}">{{erro ? erro : dica}}</text>
+        <text class="{{digitadoCls}}">{{mostrado}}</text>
+        <text class="{{avisoCls}}">{{aviso}}</text>
       </div>
       <div class="teclado">
         <div class="linha" for="{{linha in teclas}}">
-          <div class="tecla {{t.cls}}" for="{{t in linha}}" onclick="tocar(t.k)">
+          <div class="{{t.cls}}" for="{{t in linha}}" onclick="tocar(t.k)">
             <text class="rotuloTecla">{{t.t}}</text>
           </div>
         </div>
@@ -57,12 +57,12 @@
     </div>
 
     <!-- Resultado -->
-    <div class="tela centro" if="{{tela === 'resultado'}}">
-      <text class="titulo">Juros {{tipo === 'simples' ? 'simples' : 'compostos'}}</text>
+    <div class="tela centro" if="{{telaResultado}}">
+      <text class="titulo">{{tituloResultado}}</text>
       <text class="resumo">{{resumo1}}</text>
       <text class="resumo">{{resumo2}}</text>
       <text class="legenda">Total a pagar</text>
-      <text class="total {{tamanhoTotal}}">{{total}}</text>
+      <text class="{{totalCls}}">{{total}}</text>
       <text class="legenda">Juros</text>
       <text class="linhaValor">{{juros}}</text>
       <text class="legenda">Cada parcela</text>
@@ -83,8 +83,11 @@
 <script>
 import { CAMPOS, calcular, digitar, mostrarCampo, mostrarRascunho, paraNumero, porcento, reais, validar } from '../../common/juros.js'
 
+// Só padrões já usados por mini-apps que rodam na banda: propriedades simples no template
+// (sem índice de lista nem expressão), classes prontas e "for" sobre listas de objetos.
+
 function k(t, key, cls) {
-  return { t: t, k: key, cls: cls }
+  return { t: t, k: key, cls: 'tecla ' + cls }
 }
 
 var NUMEROS = [
@@ -96,54 +99,93 @@ var TECLAS_DECIMAIS = NUMEROS.concat([[k(',', ',', 'fn'), k('0', '0', ''), k('�
 // Parcelas não têm vírgula: a tecla fica apagada.
 var TECLAS_INTEIRAS = NUMEROS.concat([[k('', '', 'apagada'), k('0', '0', ''), k('⌫', 'DEL', 'fn')]])
 
-var VAZIO = { texto: 'Tocar para digitar', cls: 'vazio' }
+var VAZIO = 'Tocar para digitar'
+
+function tamanho(texto, a, b) {
+  return texto.length <= a ? 'grande' : texto.length <= b ? 'medio' : 'pequeno'
+}
 
 export default {
   private: {
-    tela: 'principal',
+    telaPrincipal: true,
+    telaTeclado: false,
+    telaResultado: false,
     // Textos confirmados de cada campo ('' = ainda não preenchido).
     textos: ['', '', ''],
-    barras: [VAZIO, VAZIO, VAZIO],
+    valorTexto: VAZIO,
+    valorCls: 'vazio',
+    parcelasTexto: VAZIO,
+    parcelasCls: 'vazio',
+    taxaTexto: VAZIO,
+    taxaCls: 'vazio',
     pronto: false,
+    calcularCls: 'calcular off',
+    calcularTextoCls: 'calcularTextoOff',
     tipo: 'composto',
+    simplesCls: 'op',
+    simplesTextoCls: 'opTexto',
+    compostoCls: 'op sel',
+    compostoTextoCls: 'opTextoSel',
     // Teclado
     campo: 0,
     rascunho: '',
     titulo: '',
     mostrado: '',
-    tamanho: 'grande',
-    dica: '',
-    erro: '',
+    digitadoCls: 'digitado grande',
+    aviso: '',
+    avisoCls: 'dica',
     teclas: TECLAS_DECIMAIS,
     // Resultado
+    tituloResultado: '',
     resumo1: '',
     resumo2: '',
     total: '',
-    tamanhoTotal: 'grande',
+    totalCls: 'total grande',
     juros: '',
     parcela: ''
   },
 
+  mostrar(tela) {
+    this.telaPrincipal = tela === 'principal'
+    this.telaTeclado = tela === 'teclado'
+    this.telaResultado = tela === 'resultado'
+  },
+
+  textoBarra(indice) {
+    var texto = this.textos[indice]
+    return texto === '' ? VAZIO : mostrarCampo(CAMPOS[indice].id, paraNumero(texto))
+  },
+
   atualizarPrincipal() {
-    var barras = []
-    var pronto = true
-    for (var i = 0; i < CAMPOS.length; i++) {
-      var texto = this.textos[i]
-      if (texto === '') {
-        barras.push(VAZIO)
-        pronto = false
-      } else {
-        barras.push({ texto: mostrarCampo(CAMPOS[i].id, paraNumero(texto)), cls: 'valor' })
-      }
-    }
-    this.barras = barras
-    this.pronto = pronto
+    var t = this.textos
+    this.valorTexto = this.textoBarra(0)
+    this.valorCls = t[0] === '' ? 'vazio' : 'valor'
+    this.parcelasTexto = this.textoBarra(1)
+    this.parcelasCls = t[1] === '' ? 'vazio' : 'valor'
+    this.taxaTexto = this.textoBarra(2)
+    this.taxaCls = t[2] === '' ? 'vazio' : 'valor'
+    this.pronto = t[0] !== '' && t[1] !== '' && t[2] !== ''
+    this.calcularCls = this.pronto ? 'calcular' : 'calcular off'
+    this.calcularTextoCls = this.pronto ? 'calcularTexto' : 'calcularTextoOff'
+  },
+
+  atualizarTipo() {
+    var simples = this.tipo === 'simples'
+    this.simplesCls = simples ? 'op sel' : 'op'
+    this.simplesTextoCls = simples ? 'opTextoSel' : 'opTexto'
+    this.compostoCls = simples ? 'op' : 'op sel'
+    this.compostoTextoCls = simples ? 'opTexto' : 'opTextoSel'
   },
 
   atualizarTeclado() {
     var texto = mostrarRascunho(CAMPOS[this.campo].id, this.rascunho)
     this.mostrado = texto
-    this.tamanho = texto.length <= 11 ? 'grande' : texto.length <= 14 ? 'medio' : 'pequeno'
+    this.digitadoCls = 'digitado ' + tamanho(texto, 11, 14)
+  },
+
+  mostrarAviso(erro) {
+    this.aviso = erro ? erro : CAMPOS[this.campo].dica
+    this.avisoCls = erro ? 'erro' : 'dica'
   },
 
   abrir(indice) {
@@ -151,24 +193,35 @@ export default {
     this.campo = indice
     this.rascunho = this.textos[indice]
     this.titulo = campo.titulo
-    this.dica = campo.dica
-    this.erro = ''
     this.teclas = campo.decimais === 0 ? TECLAS_INTEIRAS : TECLAS_DECIMAIS
+    this.mostrarAviso('')
     this.atualizarTeclado()
-    this.tela = 'teclado'
+    this.mostrar('teclado')
+  },
+
+  abrirValor() {
+    this.abrir(0)
+  },
+
+  abrirParcelas() {
+    this.abrir(1)
+  },
+
+  abrirTaxa() {
+    this.abrir(2)
   },
 
   tocar(tecla) {
     if (tecla === '') return
     this.rascunho = digitar(this.rascunho, tecla, CAMPOS[this.campo])
-    this.erro = ''
+    this.mostrarAviso('')
     this.atualizarTeclado()
   },
 
   confirmar() {
     var erro = validar(CAMPOS[this.campo].id, paraNumero(this.rascunho))
     if (erro) {
-      this.erro = erro
+      this.mostrarAviso(erro)
       return
     }
     // Cópia da lista para a tela perceber a mudança.
@@ -176,15 +229,21 @@ export default {
     textos[this.campo] = this.rascunho
     this.textos = textos
     this.atualizarPrincipal()
-    this.tela = 'principal'
+    this.mostrar('principal')
   },
 
   cancelar() {
-    this.tela = 'principal'
+    this.mostrar('principal')
   },
 
-  escolher(tipo) {
-    this.tipo = tipo
+  escolherSimples() {
+    this.tipo = 'simples'
+    this.atualizarTipo()
+  },
+
+  escolherComposto() {
+    this.tipo = 'composto'
+    this.atualizarTipo()
   },
 
   calcularConta() {
@@ -193,23 +252,36 @@ export default {
     var parcelas = paraNumero(this.textos[1])
     var taxa = paraNumero(this.textos[2])
     var r = calcular(valor, parcelas, taxa, this.tipo)
+    this.tituloResultado = this.tipo === 'simples' ? 'Juros simples' : 'Juros compostos'
     this.resumo1 = reais(valor) + ' em ' + parcelas + 'x'
     this.resumo2 = porcento(taxa) + ' ao mês'
     this.total = reais(r.montante)
-    this.tamanhoTotal = this.total.length <= 12 ? 'grande' : this.total.length <= 16 ? 'medio' : 'pequeno'
+    this.totalCls = 'total ' + tamanho(this.total, 12, 16)
     this.juros = reais(r.juros)
     this.parcela = parcelas + 'x de ' + reais(r.parcela)
-    this.tela = 'resultado'
+    this.mostrar('resultado')
   },
 
   voltar() {
-    this.tela = 'principal'
+    this.mostrar('principal')
   },
 
   novaConta() {
     this.textos = ['', '', '']
     this.atualizarPrincipal()
-    this.tela = 'principal'
+    this.mostrar('principal')
+  },
+
+  // Gesto de voltar da banda: no teclado ou no resultado, volta para a tela principal em vez de
+  // fechar o app e perder o que foi digitado; na tela principal, fecha o app. Mesmo padrão de uma
+  // calculadora que já roda na Mi Band 10 (sempre retorna true e sai com this.$app.exit()).
+  onBackPress() {
+    if (this.telaPrincipal) {
+      this.$app.exit()
+    } else {
+      this.mostrar('principal')
+    }
+    return true
   }
 }
 </script>
