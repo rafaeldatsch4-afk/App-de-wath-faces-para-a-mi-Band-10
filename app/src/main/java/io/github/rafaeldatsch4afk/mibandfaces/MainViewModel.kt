@@ -16,7 +16,7 @@ import io.github.rafaeldatsch4afk.mibandfaces.band.InstallProgress
 import io.github.rafaeldatsch4afk.mibandfaces.band.InstalledApp
 import io.github.rafaeldatsch4afk.mibandfaces.band.InstalledFace
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BandScanner
-import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BandTransport
+import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.AndroidGattIo
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BleTransport
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.FoundDevice
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.SppTransport
@@ -32,6 +32,9 @@ import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKey
 import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKeyImporter
 import io.github.rafaeldatsch4afk.mibandfaces.key.AuthKeyStore
 import io.github.rafaeldatsch4afk.mibandfaces.key.KeyCandidate
+import io.github.rafaeldatsch4afk.mibandfaces.protocol.BandLink
+import io.github.rafaeldatsch4afk.mibandfaces.protocol.BleV1Link
+import io.github.rafaeldatsch4afk.mibandfaces.protocol.XiaomiLink
 import io.github.rafaeldatsch4afk.mibandfaces.miniapp.RpkFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -365,7 +368,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 scanner.stop()
                 // Serviço em primeiro plano: evita que o Android congele o app e derrube a conexão.
                 if (!ConnectionService.start(getApplication())) log.warn("Não consegui iniciar o serviço em primeiro plano; a conexão pode cair em segundo plano")
-                client.connect({ createTransport(address) }, AuthKey.toBytes(key), autoReconnect = true)
+                client.connectLink({ createLink(address) }, AuthKey.toBytes(key), autoReconnect = true)
             } catch (e: SecurityException) {
                 _message.value = "Permissão de Bluetooth negada"
             } catch (e: Exception) {
@@ -541,13 +544,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun createTransport(address: String): BandTransport {
+    /** Enlace novo para o transporte escolhido (também usado em cada reconexão automática). */
+    private fun createLink(address: String): BandLink {
         val a = adapter ?: throw IllegalStateException("Sem Bluetooth")
         val device = a.getRemoteDevice(address)
         return when (_transport.value) {
-            TransportKind.SPP -> SppTransport(a, device, log)
-            TransportKind.BLE -> BleTransport(getApplication(), device, log)
-            TransportKind.BLE_V1 -> throw IllegalStateException("O BLE V1 (Mi Band 8) ainda não está disponível nesta versão")
+            TransportKind.SPP -> XiaomiLink(SppTransport(a, device, log), log)
+            TransportKind.BLE -> XiaomiLink(BleTransport(getApplication(), device, log), log)
+            TransportKind.BLE_V1 -> BleV1Link(AndroidGattIo(getApplication(), device, log), log)
         }
     }
 

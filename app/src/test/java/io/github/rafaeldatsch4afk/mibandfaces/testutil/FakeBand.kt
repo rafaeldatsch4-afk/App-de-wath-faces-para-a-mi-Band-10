@@ -121,8 +121,20 @@ open class FakeBand(
     private fun v1Nonce(base: ByteArray, counter: Int) =
         base + ByteArray(4) + java.nio.ByteBuffer.allocate(4).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(counter).array()
 
+    /** Lado GATT quando a banda fala BLE V1 (Mi Band 8). */
+    @Volatile
+    private var bleV1: FakeBleV1Peer? = null
+
+    fun attachBleV1(peer: FakeBleV1Peer) {
+        bleV1 = peer
+        authenticated = false
+    }
+
+    /** Pacote vindo do BLE V1 (comandos cifrados com o contador u16 na frente). */
+    fun receiveV1(channel: Int, encrypted: Boolean, body: ByteArray) = onV1Data(channel, encrypted, body)
+
     /** Protocolo "V1" (SPP V1 ou BLE V1): AES-CCM no lugar do AES-CTR do V2. */
-    protected open val usesV1Crypto: Boolean get() = transport.isV1
+    protected open val usesV1Crypto: Boolean get() = bleV1 != null || transport.isV1
 
     private fun ccmDecrypt(key: ByteArray, nonce: ByteArray, data: ByteArray): ByteArray {
         @Suppress("DEPRECATION")
@@ -151,6 +163,10 @@ open class FakeBand(
 
     /** Envia um pacote V1 (o canal e o "cifrado" são traduzidos por cada transporte). */
     protected open fun sendToHostV1(channel: Int, encrypted: Boolean, body: ByteArray) {
+        bleV1?.let { peer ->
+            peer.sendToHost(encrypted, body)
+            return
+        }
         transport.sendToHost(channel, if (encrypted) SppV1.DATA_TYPE_ENCRYPTED else SppV1.DATA_TYPE_PLAIN, body)
     }
 

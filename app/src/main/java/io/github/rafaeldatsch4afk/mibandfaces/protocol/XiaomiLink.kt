@@ -271,7 +271,7 @@ class XiaomiLink(
                     frame = SppV1.send(SppV1.CHANNEL_MASS, serial, SppV1.DATA_TYPE_ENCRYPTED, c.encrypt(body, 0))
                     what = "V1 dados serial=$serial"
                 }
-                else -> throw LinkException("Canal $channel não existe no SPP V1")
+                else -> throw LinkUnsupportedException("Canal $channel não existe no SPP V1")
             }
             writeQueue.trySend(Outgoing(frame, written))
         }

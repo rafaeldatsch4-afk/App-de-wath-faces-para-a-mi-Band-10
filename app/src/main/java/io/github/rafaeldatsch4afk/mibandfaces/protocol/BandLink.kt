@@ -2,6 +2,9 @@ package io.github.rafaeldatsch4afk.mibandfaces.protocol
 
 import kotlinx.coroutines.Deferred
 
+/** A banda (ou o protocolo) não oferece o que foi pedido. Não é queda: não adianta reconectar. */
+class LinkUnsupportedException(message: String) : Exception(message)
+
 /**
  * Enlace já negociado com a banda, independente do protocolo por baixo: SPP V1/V2 ou BLE V2
  * ([XiaomiLink]) ou BLE V1 da Mi Band 8 ([BleV1Link]). Os canais são os lógicos do SPP V2:
