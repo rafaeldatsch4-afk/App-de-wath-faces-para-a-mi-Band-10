@@ -64,7 +64,7 @@ sealed interface FaceFile {
     )
 
     companion object {
-        /** Limite de sanidade. Faces de 212×520 costumam ter bem menos de 2 MB. */
+        /** Limite de sanidade. Faces de 192×490 ou 212×520 costumam ter bem menos de 2 MB. */
         const val MAX_SIZE = 16 * 1024 * 1024
         private const val MIN_V2_SIZE = 0xa8
 

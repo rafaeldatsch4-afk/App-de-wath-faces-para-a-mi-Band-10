@@ -23,7 +23,7 @@ import java.util.UUID
  * Fonte: XiaomiUuids / XiaomiBleProtocolV2 no Gadgetbridge. O miband-hack observou essas
  * características numa Mi Band 10 real (docs/captures/mi-band-10-native-macos.md).
  *
- * O Gadgetbridge usa o Bluetooth Clássico para a Mi Band 10; este transporte fica como
+ * O Gadgetbridge usa o Bluetooth Clássico para as Mi Band 9 e 10; este transporte fica como
  * alternativa, ainda não validada com a banda real.
  */
 @SuppressLint("MissingPermission") // as permissões são pedidas na tela de conexão

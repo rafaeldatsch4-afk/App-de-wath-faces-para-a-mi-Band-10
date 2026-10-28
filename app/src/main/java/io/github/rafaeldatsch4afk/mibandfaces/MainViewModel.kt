@@ -81,7 +81,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _manualModel = MutableStateFlow(settings.bandModel)
     val manualModel: StateFlow<BandModel?> = _manualModel.asStateFlow()
 
-    /** Modelo usado para validar arquivos: o escolhido à mão, o detectado pelo nome ou a Mi Band 10. */
+    /** Modelo usado para validar arquivos: o escolhido à mão, o detectado pelo nome ou, sem pista, a Mi Band 10. */
     private val _model = MutableStateFlow(effectiveModel())
     val model: StateFlow<BandModel> = _model.asStateFlow()
 
@@ -319,9 +319,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         else "A conta lista aparelhos ($names), mas nenhum veio com chave.",
                     )
                 }
-                // Mi Band 10 primeiro; depois os campos mais confiáveis.
+                // O modelo escolhido primeiro, depois as outras bandas suportadas e os campos mais confiáveis.
+                val model = _model.value
                 val ordered = withKey.sortedWith(
-                    compareByDescending<CloudDevice> { "band 10" in it.name.lowercase() }
+                    compareByDescending<CloudDevice> { BandModel.fromDeviceName(it.name) == model }
+                        .thenByDescending { BandModel.fromDeviceName(it.name) != null }
                         .thenByDescending { it.keyField != "token" },
                 )
                 _keyCandidates.value = ordered.map {

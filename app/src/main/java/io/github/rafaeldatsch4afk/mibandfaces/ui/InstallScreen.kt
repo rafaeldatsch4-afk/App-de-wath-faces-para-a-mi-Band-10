@@ -125,7 +125,7 @@ fun InstallScreen(vm: MainViewModel) {
             SectionCard("Instalar") {
                 WarningBox(
                     "Riscos: um envio corrompido ou uma face malformada pode travar a banda. O arquivo foi " +
-                        "validado e a instalação já funcionou numa Mi Band 10 real, mas cada face e cada modelo é diferente. Mantenha a banda " +
+                        "validado e a instalação já funcionou numa Mi Band 10 real (as Mi Band 8 e 9 ainda não foram testadas). Mantenha a banda " +
                         "carregada e perto do celular, e não feche o app durante o envio.",
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {

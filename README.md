@@ -1,23 +1,33 @@
 # Mi Band 10 Faces
 
-App Android (Kotlin + Jetpack Compose, tema escuro) para instalar watch faces e mini-apps (`.rpk`) na **Xiaomi Smart Band 10** direto do celular, sem usar o Mi Fitness para o envio. O protocolo foi portado do [Gadgetbridge](https://codeberg.org/Freeyourgadget/Gadgetbridge) e conferido com o [miband-hack](https://github.com/ptrinh/miband-hack).
+App Android (Kotlin + Jetpack Compose, tema escuro) para instalar watch faces e mini-apps (`.rpk`) na **Xiaomi Smart Band 10**, e também na **Mi Band 9** e na **Mi Band 8**, direto do celular, sem usar o Mi Fitness para o envio. O protocolo foi portado do [Gadgetbridge](https://codeberg.org/Freeyourgadget/Gadgetbridge) e conferido com o [miband-hack](https://github.com/ptrinh/miband-hack).
 
-> ✅ **Testado com uma Mi Band 10 real** (M2459B1, firmware 3.2.7): login na conta Xiaomi, autenticação, acerto da hora, lista de faces, instalação de uma watch face e instalação de um mini-app `.rpk` (uma calculadora) funcionaram. Leia [Riscos](#riscos) antes de usar e mande os logs da aba **Logs** se algo der errado.
+> ✅ **Testado com uma Mi Band 10 real** (M2459B1, firmware 3.2.7): login na conta Xiaomi, autenticação, acerto da hora, lista de faces, instalação de uma watch face e instalação de um mini-app `.rpk` (uma calculadora) funcionaram. As **Mi Band 8 e 9 ainda não foram testadas com bandas reais** (só contra bandas simuladas nos testes). Leia [Riscos](#riscos) antes de usar e mande os logs da aba **Logs** se algo der errado.
+
+| Modelo | Tela | Conexão | Mini-apps |
+|---|---|---|---|
+| Mi Band 10 | 212 × 520 | Bluetooth Clássico (SPP V2) | sim |
+| Mi Band 9 | 192 × 490 | Bluetooth Clássico (SPP V2 ou V1, conforme o firmware) | sim |
+| Mi Band 8 | 192 × 490 | Bluetooth LE "V1" | não (a banda não aceita) |
+
+As versões Pro e Active não são suportadas (outra tela).
 
 Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 
 ## Funcionalidades
 
 - [x] Busca da banda (BLE + Bluetooth Clássico), lista de pareados e pareamento com o Android
-- [x] Conexão por Bluetooth Clássico (SPP/RFCOMM, padrão) ou BLE V2 (GATT FE95, experimental)
-- [x] Sondagem de versão SPP e sessão SPP V2 com ACK/NACK, reenvio por timeout e janela de envio
+- [x] Modelo detectado pelo nome Bluetooth (ou escolhido à mão): tela, regras das faces e protocolo de cada um
+- [x] Conexão por Bluetooth Clássico (SPP/RFCOMM, Mi Band 9 e 10), BLE V1 (Mi Band 8) ou BLE V2 (GATT FE95, experimental)
+- [x] Sondagem de versão SPP; sessão SPP V2 com ACK/NACK, reenvio por timeout e janela de envio, ou SPP V1 (firmwares antigos da Mi Band 9)
+- [x] BLE V1 da Mi Band 8: comandos únicos com ACK, transferências em partes com reenvio, AES-CCM
 - [x] Autenticação com a auth key (handshake miwear-auth, AES-CCM/CTR)
 - [x] Chave digitada (32 hex, aceita `0x`) ou importada de arquivo, guardada cifrada com o **Android Keystore**
 - [x] **Buscar a chave na conta Xiaomi**: login na página da própria Xiaomi (QR code ou navegador do celular; o app nunca vê a senha), leitura dos aparelhos do Mi Fitness e escolha da chave. Confirmado com uma conta real
 - [x] Importar a chave de arquivo: logs do Mi Fitness (`encryptKey`, `token`, `authKey`, `huamiAuthKey`) ou a pasta do Mi Fitness (`manifest.sqlite` / ZIP) com `registerList_<região>` de **todas** as regiões
 - [x] Acerto da hora da banda logo depois de autenticar (data, hora, fuso e formato 12/24 h do celular)
 - [x] Informações da banda (modelo, firmware, bateria)
-- [x] Escolha do arquivo `.face`/`.bin` com validação: cabeçalho v2, ID, nome, resolução do preview (212×520) e checagem estrutural interna
+- [x] Escolha do arquivo `.face`/`.bin` com validação: cabeçalho v2, ID, nome, resolução do preview (conforme o modelo) e checagem estrutural interna; na Mi Band 8, a face precisa ter a tela AOD
 - [x] Preview da face na proporção da tela da banda
 - [x] Instalação: pedido 4/4, envio 22/0 em partes **esperando o ACK de cada parte**, barra de progresso, confirmação pela lista e ativação
 - [x] Erros tratados: desconexão, timeout sem ACK, NACK repetido, face já instalada (remove a versão antiga se você confirmar), banda cheia (10 faces), recusa da banda (`installStatus`/`errno`)
@@ -38,7 +48,7 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 1. **Vincule a banda no Mi Fitness** (uma vez) e obtenha a auth key. Não desvincule depois: isso invalida a chave.
 2. Na aba **Chave**, toque em *Entrar na conta Xiaomi* (veja abaixo), ou digite a chave, ou toque em *Importar de um arquivo* (log do Mi Fitness, `manifest.sqlite` ou ZIP da pasta do Mi Fitness). Se aparecerem várias candidatas, comece pelas marcadas como "campo conhecido".
 3. Feche o Mi Fitness (ou tire a permissão de Bluetooth dele), para ele não disputar a conexão.
-4. Na aba **Conexão**: *Buscar* → toque na sua banda → *Parear* (confirme na banda) → *Conectar*. O status deve chegar a "Conectado e autenticado".
+4. Na aba **Conexão**: *Buscar* → toque na sua banda → confira o **Modelo** (detectado pelo nome; dá para escolher à mão) → *Parear* (confirme na banda) → *Conectar*. O status deve chegar a "Conectado e autenticado". O transporte certo para o modelo é marcado sozinho (Mi Band 8: BLE V1).
 5. Na aba **Instalar**: *Escolher arquivo* (uma face `.face`/`.bin` ou um mini-app `.rpk`; o tipo é detectado pelo conteúdo), confira a validação e o preview, marque "Entendo os riscos" e toque em *Instalar na banda*. Deixe o app aberto até terminar.
 6. Na aba **Faces**: veja as faces instaladas (ative ou remova) e, abaixo delas, os mini-apps instalados (remova).
 
@@ -47,7 +57,7 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 1. Aba **Chave → Entrar na conta Xiaomi** (deixe a região em *automática*; se não achar nada, escolha a região da conta, ex.: SG ou DE).
 2. Entre com a **mesma conta Xiaomi do Mi Fitness**: escaneie o QR com a câmera de **outro** celular, ou toque em *Abrir a página de login neste celular* e entre pelo navegador. Depois volte para o app.
    O QR vale por ~5 minutos (o app mostra a contagem). Se a página da Xiaomi disser "QR expirado", toque em **Gerar QR novo** e faça tudo sem demora.
-3. O app mostra as chaves encontradas (a da Mi Band 10 vem primeiro). Toque na que quer usar; ela é salva no Keystore.
+3. O app mostra as chaves encontradas (a do modelo escolhido vem primeiro). Toque na que quer usar; ela é salva no Keystore.
 
 Privacidade: a senha só é digitada na página da Xiaomi. O app guarda a sessão apenas na memória durante a busca e a descarta; os tokens nunca vão para o log. Esse é o **único** recurso que usa a internet (permissão `INTERNET`); o envio das faces é todo por Bluetooth.
 
@@ -99,7 +109,8 @@ app/src/test/                  testes com uma banda simulada (transporte, autent
 
 Detalhes em [docs/PROTOCOLO.md](docs/PROTOCOLO.md#8-o-que-não-está-confirmado-no-código-de-referência). Resumo:
 
-- **BLE vs. Clássico:** o Gadgetbridge conecta a Mi Band 10 por Bluetooth Clássico (SPP). O app usa SPP por padrão; o BLE é alternativa experimental.
+- **BLE vs. Clássico:** o Gadgetbridge conecta as Mi Band 9 e 10 por Bluetooth Clássico (SPP) e a Mi Band 8 por BLE V1. O app faz o mesmo; o BLE V2 é alternativa experimental.
+- **Mi Band 8 e 9:** portadas do Gadgetbridge e do miband-hack, testadas só contra bandas simuladas. Na Mi Band 8, o envio de uma face é lento (cerca de 2 KB/s, segundo o miband-hack).
 - **Limite de 10 faces:** vem da especificação do app, não do Gadgetbridge nem do miband-hack.
 - **Tamanho das partes:** segue o Gadgetbridge (`chunkSize − 4`); o miband-hack desconta 2 bytes a mais no SPP.
 - **Janela de envio:** 1 quadro por vez (cada parte espera o ACK da anterior), como pedido. É mais lento que a janela anunciada pela banda, mas mais conservador. Ajustável em `LinkConfig.maxWindow`.
@@ -115,6 +126,7 @@ Detalhes em [docs/PROTOCOLO.md](docs/PROTOCOLO.md#8-o-que-não-está-confirmado-
   - manda o MD5 e o CRC32 do arquivo inteiro, como o Gadgetbridge, para a banda conferir;
   - nunca corta um pacote no meio ao cancelar, e não ativa uma face cujo envio não terminou.
 - Um mini-app `.rpk` roda código JavaScript de outra pessoa dentro da banda. Ele não mexe no firmware, mas um app com defeito pode travar ou fechar sozinho; nesse caso, remova-o na aba **Faces**. Instale só apps de quem você confia.
+- **Mi Band 8:** uma face sem a tela AOD (sempre ligada) já impediu uma Mi Band 8 de ligar (miband-hack). O app recusa essas faces quando o modelo é a Mi Band 8; por isso confira se o modelo escolhido na aba **Conexão** está certo.
 - Mantenha a banda carregada e perto do celular durante o envio.
 - Uso pessoal, no seu próprio aparelho. O app não mexe em firmware.
 

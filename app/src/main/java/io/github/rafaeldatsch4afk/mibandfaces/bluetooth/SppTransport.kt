@@ -15,7 +15,7 @@ import java.util.UUID
 
 /**
  * Bluetooth Clássico, perfil de porta serial (SPP) sobre RFCOMM. É o transporte que o
- * Gadgetbridge usa para a Mi Band 10 (MiBand10Coordinator.getConnectionType() = BT_CLASSIC).
+ * Gadgetbridge usa para as Mi Band 9 e 10 (getConnectionType() = BT_CLASSIC).
  * A banda precisa estar pareada (bond) com o celular no Android.
  */
 @SuppressLint("MissingPermission") // as permissões são pedidas na tela de conexão

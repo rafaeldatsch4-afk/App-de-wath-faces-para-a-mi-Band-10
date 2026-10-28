@@ -1,6 +1,16 @@
-# Protocolo Xiaomi (Mi Band 10): resumo
+# Protocolo Xiaomi (Mi Band 8, 9 e 10): resumo
 
 Resumo do que li no código do **Gadgetbridge** (`app/src/main/java/nodomain/freeyourgadget/gadgetbridge/service/devices/xiaomi/` e os `.proto` em `GBProtobufGenerator/src/main/proto/`, commit `4c64bc8e`, 26/10/2026) e no **miband-hack** (`docs/protocol.md` e capturas reais da Mi Band 10 em `docs/captures/`). Os nomes de classes entre parênteses são do Gadgetbridge.
+
+## 0. Modelos
+
+| Modelo | Tela | Conexão no Gadgetbridge | No app | Observações |
+|---|---|---|---|---|
+| Mi Band 8 | 192 × 490 (preview reduzido conhecido: 122 × 310) | BLE → **BLE V1** (`XiaomiBleProtocolV1`) | BLE V1 | Não aceita mini-apps (miband-hack, firmware 2.3.14). Toda face precisa da tela AOD: uma face sem ela impediu uma Mi Band 8 de ligar. |
+| Mi Band 9 | 192 × 490 | `BT_CLASSIC` → SPP V1 ou V2 (pela sondagem) | SPP (V1 ou V2) | |
+| Mi Band 10 | 212 × 520 | `BT_CLASSIC` → SPP V2 | SPP V2 | Testada com uma banda real. |
+
+As versões Pro e Active têm outra tela (e, na 9 Active, BLE V2) e não são suportadas. O modelo é detectado pelo nome Bluetooth (`^Xiaomi Smart Band 8 [A-Z0-9]{4}$`, `… 9 [0-9A-F]{4}$`, `… 10 [0-9A-F]{4}$`) ou escolhido à mão.
 
 ## 1. Transporte: Bluetooth Clássico, não BLE
 
@@ -20,7 +30,19 @@ Logo após abrir o RFCOMM, envia-se um pacote **SPP V1** pedindo a versão (`Xia
 ba dc fe | 00 (canal versão) | c0 (flags) | 03 00 (tamanho) | 00 (opcode READ) | 00 (serial) | 00 (plain) | ef
 ```
 
-Se `payload[0] >= 2`, a sessão passa a usar **SPP V2**. A Mi Band 10 respondeu `03 00 41` numa captura real. Sem resposta em 5 s, o Gadgetbridge assume V1 (este app não implementa V1 e mostra um erro).
+Se `payload[0] >= 2`, a sessão passa a usar **SPP V2**. A Mi Band 10 respondeu `03 00 41` numa captura real. Com versão menor, ou sem resposta em 5 s, a sessão segue em **SPP V1**, como no Gadgetbridge.
+
+### SPP V1 (`XiaomiSppPacketV1`, `XiaomiSppProtocolV1`)
+
+```
+ba dc fe | canal | flags (0x80) | tamanho (2 LE = payload + 3) | opcode (2 = SEND) | serial | dataType | payload | ef
+```
+
+- Canais: 0 versão, 1 comandos da banda, 2 comandos do celular, 3 atividade, 5 arquivos.
+- `dataType`: 0 puro, 1 cifrado, 2 autenticação (comandos 1/26 e 1/27 em texto puro).
+- Comandos cifrados: `u16 contador | AES-CCM(contador)`; o contador começa em 1. Arquivos (canal 5): AES-CCM com contador 0, sem prefixo. O que vem da banda é decifrado com contador 0.
+- Nonce CCM de 12 bytes: `nonce4 | 00000000 | u32 contador LE`, tag de 4 bytes.
+- Não há ACK nem reenvio: cada pacote vai uma vez.
 
 ## 3. SPP V2 (`XiaomiSppPacketV2`, `XiaomiSppProtocolV2`)
 
@@ -35,6 +57,15 @@ a5 a5 | tipo (4 bits baixos) | seq (1) | tamanho (2, LE) | CRC-16/ARC do payload
 - Reenvio após 10 s sem ACK; após 3 timeouts seguidos a conexão é considerada morta.
 - **Conexão parada:** na Mi Band 10 real, a banda fechou o RFCOMM depois de ~60 s sem nenhum tráfego (medido: 57,5 s e 62,5 s sem RX/TX). Por isso o app pede a bateria (`2/1`, comando inofensivo) quando a conexão fica 20 s parada. Não está no Gadgetbridge, que normalmente tem tráfego constante (notificações, atividade).
 - **Quedas mesmo com tráfego:** com o keep-alive, a banda ainda fechou o RFCOMM uma vez 48 s depois de conectar (2 s depois de uma resposta normal). A causa não está clara (a banda manda pedidos que o app não responde: 2/42, 18/0 música, 17/7, 10/3 clima). O app reconecta sozinho e, no envio de face, repete 4/4 e 22/0: a banda responde com `resumePosition` e o envio continua dali (o mesmo campo que o Gadgetbridge usa).
+
+## 3b. BLE V1 da Mi Band 8 (`XiaomiBleProtocolV1`, `XiaomiCharacteristicV1`)
+
+Serviço `FE95` com as características `0051` (comandos da banda), `0052` (comandos do celular), `0053` (atividade) e `0055` (arquivos, opcional). O celular pede MTU 512 e liga as notificações das quatro. Cada característica tem o próprio protocolo:
+
+- Controle (`00 00 | tipo | …`): `0` início de transferência em partes `[00 00 00 cifrado u16 n]` → `00 00 01 01`; `1` resposta (0 terminou, 1 pode mandar, 2 NACK, 5 reenvie `[u16…]`); `2` comando único `[00 00 02 cifra (1 cifrado / 2 puro) (u16 contador) payload]` → ACK `00 00 03 00`; `3` ACK (byte 3 = 0 é OK).
+- Partes: `u16 índice (a partir de 1) | dados`, até (escrita − 2) bytes. Vai em partes o que não cabe em (escrita − 6).
+- Cifra: AES-CCM como no SPP V1. O contador vai no cabeçalho do comando único ou na frente do payload em partes; começa em 1 depois da autenticação. Na `0055` o contador é sempre 0 e não vai no pacote. O que vem da banda é decifrado com contador 0.
+- Envio de arquivos: cada parte do 22/0 é uma transferência na `0055`, por escrita sem resposta (5× mais rápido numa Mi Band 8, segundo o miband-hack). Uma face de 1 MB leva cerca de 10 minutos.
 
 ## 4. Autenticação (`XiaomiAuthService`)
 
@@ -111,6 +142,7 @@ Não confirmado com conta real (o miband-hack avisa o mesmo).
 
 ## 8. O que não está confirmado no código de referência
 
+- **Mi Band 8 e 9:** o suporte foi portado do Gadgetbridge e do miband-hack e testado só contra bandas simuladas. Não sei qual firmware da Mi Band 9 ainda fala SPP V1.
 - **Limite de 10 faces:** não aparece no Gadgetbridge nem no miband-hack; o app usa o valor informado por você.
 - **Tamanho das partes do upload:** o Gadgetbridge usa `chunkSize − 4`; o miband-hack desconta mais 2 bytes no SPP (citando o AstroBox). O app segue o Gadgetbridge.
 - **Cancelamento:** não existe comando de "abortar upload" no código de referência. O cancelamento do app para de enviar entre duas partes (nunca no meio de um quadro), não ativa a face e fecha a conexão. Como o MD5 e o CRC32 do arquivo inteiro vão no início e no fim, um envio incompleto não deveria ser instalado, mas isso não está confirmado.
