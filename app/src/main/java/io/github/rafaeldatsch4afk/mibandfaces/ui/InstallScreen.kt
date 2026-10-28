@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.rafaeldatsch4afk.mibandfaces.MainViewModel
 import io.github.rafaeldatsch4afk.mibandfaces.MainViewModel.InstallState
+import io.github.rafaeldatsch4afk.mibandfaces.band.BandModel
 import io.github.rafaeldatsch4afk.mibandfaces.band.BandState
 import io.github.rafaeldatsch4afk.mibandfaces.band.WatchfaceManager
 import io.github.rafaeldatsch4afk.mibandfaces.face.ArgbImage
@@ -55,6 +56,7 @@ import io.github.rafaeldatsch4afk.mibandfaces.miniapp.RpkFile
 fun InstallScreen(vm: MainViewModel) {
     val selected by vm.selectedFace.collectAsStateWithLifecycle()
     val selectedApp by vm.selectedApp.collectAsStateWithLifecycle()
+    val model by vm.model.collectAsStateWithLifecycle()
     val install by vm.install.collectAsStateWithLifecycle()
     val band by vm.client.state.collectAsStateWithLifecycle()
     val faces by vm.watchfaces.faces.collectAsStateWithLifecycle()
@@ -81,7 +83,8 @@ fun InstallScreen(vm: MainViewModel) {
     ) {
         SectionCard("Arquivo") {
             Text(
-                "Escolha uma watch face (.face ou .bin) ou um mini-app (.rpk) para a Mi Band 10.",
+                "Escolha uma watch face (.face ou .bin) ou um mini-app (.rpk) para a ${model.label} " +
+                    "(tela ${model.screenText}). O modelo pode ser trocado na aba Conexão.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             // .face não tem tipo MIME registrado; a validação é feita pelo conteúdo.
@@ -122,7 +125,7 @@ fun InstallScreen(vm: MainViewModel) {
             SectionCard("Instalar") {
                 WarningBox(
                     "Riscos: um envio corrompido ou uma face malformada pode travar a banda. O arquivo foi " +
-                        "validado e a instalação já funcionou numa Mi Band 10 real, mas cada face é diferente. Mantenha a banda " +
+                        "validado e a instalação já funcionou numa Mi Band 10 real, mas cada face e cada modelo é diferente. Mantenha a banda " +
                         "carregada e perto do celular, e não feche o app durante o envio.",
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -218,12 +221,12 @@ private fun FaceDetails(fileName: String, parsed: FaceFile, preview: ArgbImage?)
                 LabeledValue("Preview", parsed.preview?.let { "${it.width}×${it.height}" } ?: "ausente")
                 Text("✓ Estrutura interna conferida (tabelas e imagens dentro do arquivo)", style = MaterialTheme.typography.bodySmall)
                 when (parsed.compatibility) {
-                    Compatibility.EXACT -> Text("✓ ${parsed.compatibility.description}", style = MaterialTheme.typography.bodySmall)
+                    Compatibility.EXACT, Compatibility.KNOWN_SIZE -> Text("✓ ${parsed.compatibilityText}", style = MaterialTheme.typography.bodySmall)
                     Compatibility.SAME_ASPECT, Compatibility.UNKNOWN ->
-                        WarningBox(parsed.compatibility.description, color = MaterialTheme.colorScheme.primary)
-                    Compatibility.INCOMPATIBLE -> WarningBox("Não pode ser instalado: ${parsed.compatibility.description}")
+                        WarningBox(parsed.compatibilityText, color = MaterialTheme.colorScheme.primary)
+                    Compatibility.INCOMPATIBLE -> WarningBox("Não pode ser instalado: ${parsed.compatibilityText}")
                 }
-                if (preview != null) PreviewImage(preview)
+                if (preview != null) PreviewImage(preview, parsed.model)
             }
         }
     }
@@ -261,16 +264,16 @@ private fun AppDetails(fileName: String, parsed: RpkFile, icon: Bitmap?) {
 }
 
 @Composable
-private fun PreviewImage(image: ArgbImage) {
+private fun PreviewImage(image: ArgbImage, model: BandModel) {
     val bitmap = remember(image) {
         Bitmap.createBitmap(image.pixels, image.width, image.height, Bitmap.Config.ARGB_8888).asImageBitmap()
     }
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        // Mostra na proporção da tela da banda (212×520).
+        // Mostra na proporção da tela da banda (ex.: 212×520 na Mi Band 10).
         Box(
             Modifier
                 .height(260.dp)
-                .aspectRatio(FaceFile.SCREEN_WIDTH.toFloat() / FaceFile.SCREEN_HEIGHT)
+                .aspectRatio(model.screenWidth.toFloat() / model.screenHeight)
                 .clip(RoundedCornerShape(24.dp))
                 .background(Color.Black),
             contentAlignment = Alignment.Center,

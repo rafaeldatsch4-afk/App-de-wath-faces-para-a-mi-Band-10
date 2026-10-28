@@ -12,6 +12,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import androidx.core.content.ContextCompat
+import io.github.rafaeldatsch4afk.mibandfaces.band.BandModel
 import io.github.rafaeldatsch4afk.mibandfaces.log.PacketLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,23 +28,15 @@ data class FoundDevice(
     val seenByBle: Boolean = false,
     val seenByClassic: Boolean = false,
 ) {
-    val isMiBand10: Boolean get() = looksLikeMiBand10(name)
-}
-
-/**
- * Mesmo padrão do Gadgetbridge (MiBand10Coordinator.getSupportedDeviceName), com uma folga para
- * nomes como "Mi Band 10". A versão Pro tem outra tela e não é o alvo deste app.
- */
-fun looksLikeMiBand10(name: String?): Boolean {
-    if (name == null) return false
-    if (Regex("^Xiaomi Smart Band 10 [0-9A-F]{4}$").matches(name)) return true
-    val lower = name.lowercase()
-    return "band 10" in lower && "pro" !in lower
+    /** Modelo suportado reconhecido pelo nome (Mi Band 8, 9 ou 10), ou null. */
+    val model: BandModel? get() = BandModel.fromDeviceName(name)
+    val isSupported: Boolean get() = model != null
 }
 
 /**
  * Busca a banda por BLE e por Bluetooth Clássico ao mesmo tempo, e lista também os aparelhos já
- * pareados. A Mi Band 10 anuncia no BLE, mas a conexão preferida (como no Gadgetbridge) é SPP.
+ * pareados. As Mi Band 9 e 10 anunciam no BLE, mas a conexão preferida (como no Gadgetbridge) é
+ * SPP; a Mi Band 8 só fala BLE.
  */
 @SuppressLint("MissingPermission") // as permissões são verificadas antes de chamar start()
 class BandScanner(
@@ -173,7 +166,7 @@ class BandScanner(
                 seenByBle = ble || old?.seenByBle == true,
                 seenByClassic = classic || old?.seenByClassic == true,
             )
-            if (old == null && next.isMiBand10) log.info("Encontrada: ${next.name} (${next.address})")
+            if (old == null && next.isSupported) log.info("Encontrada: ${next.name} (${next.address})")
             map + (device.address to next)
         }
     }

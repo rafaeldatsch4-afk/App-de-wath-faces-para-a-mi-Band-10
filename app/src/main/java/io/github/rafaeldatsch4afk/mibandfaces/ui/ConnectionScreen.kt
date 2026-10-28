@@ -39,6 +39,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.rafaeldatsch4afk.mibandfaces.MainViewModel
 import io.github.rafaeldatsch4afk.mibandfaces.TransportKind
 import io.github.rafaeldatsch4afk.mibandfaces.band.BandInfo
+import io.github.rafaeldatsch4afk.mibandfaces.band.BandModel
 import io.github.rafaeldatsch4afk.mibandfaces.band.BandState
 import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.FoundDevice
 
@@ -49,13 +50,15 @@ fun ConnectionScreen(vm: MainViewModel, gate: PermissionGate) {
     val scanning by vm.scanner.scanning.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val transport by vm.transport.collectAsStateWithLifecycle()
+    val model by vm.model.collectAsStateWithLifecycle()
+    val manualModel by vm.manualModel.collectAsStateWithLifecycle()
     val info by vm.client.info.collectAsStateWithLifecycle()
     val savedKey by vm.savedKeyMasked.collectAsStateWithLifecycle()
     var showAll by rememberSaveable { mutableStateOf(false) }
 
     val list = devices.values
-        .filter { showAll || it.isMiBand10 }
-        .sortedWith(compareByDescending<FoundDevice> { it.isMiBand10 }.thenByDescending { it.rssi ?: -999 })
+        .filter { showAll || it.isSupported }
+        .sortedWith(compareByDescending<FoundDevice> { it.isSupported }.thenByDescending { it.rssi ?: -999 })
     val selectedInfo = selected?.let { devices[it.address] ?: it }
 
     LazyColumn(
@@ -68,7 +71,7 @@ fun ConnectionScreen(vm: MainViewModel, gate: PermissionGate) {
         item {
             SectionCard("Banda") {
                 if (selectedInfo == null) {
-                    Text("Nenhuma banda escolhida. Busque e toque na sua Mi Band 10.")
+                    Text("Nenhuma banda escolhida. Busque e toque na sua Mi Band 8, 9 ou 10.")
                 } else {
                     LabeledValue("Nome", selectedInfo.name ?: "(sem nome)")
                     LabeledValue("Endereço", selectedInfo.address)
@@ -100,6 +103,30 @@ fun ConnectionScreen(vm: MainViewModel, gate: PermissionGate) {
         }
 
         item {
+            SectionCard("Modelo") {
+                val detected = BandModel.fromDeviceName(selectedInfo?.name)
+                val options = listOf<Pair<BandModel?, String>>(
+                    null to "Automático" + (detected?.let { " (detectado: ${it.label})" } ?: " (não detectado: usando ${model.label})"),
+                ) + BandModel.entries.map { it to "${it.label} — tela ${it.screenText}" }
+                options.forEach { (option, label) ->
+                    Row(
+                        Modifier.fillMaxWidth().selectable(selected = manualModel == option, onClick = { vm.setModel(option) }),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = manualModel == option, onClick = { vm.setModel(option) })
+                        Text(label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                Text(
+                    "O modelo define a tela usada para validar as faces e o protocolo de conexão. " +
+                        "As versões Pro e Active não são suportadas (outra tela).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        item {
             SectionCard("Transporte") {
                 TransportKind.entries.forEach { kind ->
                     Row(
@@ -111,8 +138,8 @@ fun ConnectionScreen(vm: MainViewModel, gate: PermissionGate) {
                     }
                 }
                 Text(
-                    "O Gadgetbridge conecta a Mi Band 10 por Bluetooth Clássico (SPP). O BLE usa o mesmo " +
-                        "protocolo sobre GATT e fica como alternativa.",
+                    "Como no Gadgetbridge: as Mi Band 9 e 10 conectam por Bluetooth Clássico (SPP) e a Mi Band 8 " +
+                        "por BLE V1. Ao escolher o modelo, o transporte recomendado é marcado sozinho.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -197,7 +224,7 @@ private fun DeviceRow(device: FoundDevice, selected: Boolean, onClick: () -> Uni
         leadingContent = {
             Icon(
                 when {
-                    device.isMiBand10 -> Icons.Filled.Watch
+                    device.isSupported -> Icons.Filled.Watch
                     device.bonded -> Icons.Filled.BluetoothConnected
                     else -> Icons.Filled.Bluetooth
                 },

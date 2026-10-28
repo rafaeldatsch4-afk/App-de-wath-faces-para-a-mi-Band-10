@@ -1,6 +1,6 @@
 package io.github.rafaeldatsch4afk.mibandfaces.miniapp
 
-import io.github.rafaeldatsch4afk.mibandfaces.face.FaceFile
+import io.github.rafaeldatsch4afk.mibandfaces.band.BandModel
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.util.zip.ZipException
@@ -53,7 +53,11 @@ sealed interface RpkFile {
             bytes.size >= 4 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte() &&
                 bytes[2] == 3.toByte() && bytes[3] == 4.toByte()
 
-        fun parse(bytes: ByteArray): RpkFile {
+        /** Lê e valida [bytes] como um mini-app para [model]. */
+        fun parse(bytes: ByteArray, model: BandModel = BandModel.BAND_10): RpkFile {
+            if (!model.supportsApps) {
+                return Rejected(bytes, "A ${model.label} não aceita mini-apps (.rpk): só watch faces. Ela não respondeu a nenhum comando de app nos testes do miband-hack.")
+            }
             if (bytes.size > MAX_SIZE) return Rejected(bytes, "Arquivo grande demais (${bytes.size / 1024} KB) para um mini-app")
             if (!looksLikeRpk(bytes)) return Rejected(bytes, "Não é um mini-app .rpk (não é um arquivo ZIP)")
 
@@ -107,8 +111,8 @@ sealed interface RpkFile {
                 warnings += "O manifest não lista \"watch\" entre os aparelhos (${deviceTypes.joinToString()}): pode não ser para a banda."
             }
             val designWidth = manifest.optJSONObject("config")?.takeIf { it.has("designWidth") }?.optInt("designWidth")
-            if (designWidth != null && designWidth != FaceFile.SCREEN_WIDTH) {
-                warnings += "Feito para uma tela de $designWidth px de largura; a Mi Band 10 tem ${FaceFile.SCREEN_WIDTH} px. " +
+            if (designWidth != null && designWidth != model.screenWidth) {
+                warnings += "Feito para uma tela de $designWidth px de largura; a ${model.label} tem ${model.screenWidth} px. " +
                     "O app pode aparecer fora de proporção."
             }
             if ("app.js" !in files) warnings += "Não tem app.js: o app pode não abrir."

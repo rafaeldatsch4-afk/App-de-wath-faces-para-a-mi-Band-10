@@ -1,17 +1,31 @@
 package io.github.rafaeldatsch4afk.mibandfaces.face
 
+import io.github.rafaeldatsch4afk.mibandfaces.band.BandModel
 import io.github.rafaeldatsch4afk.mibandfaces.util.cString
 import io.github.rafaeldatsch4afk.mibandfaces.util.readU16le
 import io.github.rafaeldatsch4afk.mibandfaces.util.readU32le
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-/** Compatibilidade do preview com a tela da Mi Band 10 (regra de XiaomiInstallHandler). */
-enum class Compatibility(val description: String) {
-    EXACT("O preview tem exatamente 212×520, o tamanho da tela da Mi Band 10."),
-    SAME_ASPECT("O preview é menor, mas tem a mesma proporção da tela: provavelmente compatível."),
-    UNKNOWN("O arquivo não tem preview: não dá para conferir a resolução."),
-    INCOMPATIBLE("A resolução do preview não bate com a tela da Mi Band 10 (212×520)."),
+/** Compatibilidade do preview com a tela do modelo escolhido (regra de XiaomiInstallHandler). */
+enum class Compatibility {
+    /** Preview do tamanho da tela. */
+    EXACT,
+
+    /** Preview reduzido de um tamanho já visto em faces para o modelo. */
+    KNOWN_SIZE,
+    SAME_ASPECT,
+    UNKNOWN,
+    INCOMPATIBLE,
+    ;
+
+    fun describe(model: BandModel): String = when (this) {
+        EXACT -> "O preview tem exatamente ${model.screenText}, o tamanho da tela da ${model.label}."
+        KNOWN_SIZE -> "O preview tem um tamanho reduzido já visto em faces para a ${model.label}."
+        SAME_ASPECT -> "O preview é menor, mas tem a mesma proporção da tela da ${model.label}: provavelmente compatível."
+        UNKNOWN -> "O arquivo não tem preview: não dá para conferir se é para a ${model.label}."
+        INCOMPATIBLE -> "A resolução do preview não bate com a tela da ${model.label} (${model.screenText}): a face é de outro modelo."
+    }
 }
 
 /**
@@ -28,9 +42,12 @@ sealed interface FaceFile {
         val name: String,
         val preview: PreviewHeader?,
         val faceCount: Int,
+        /** Modelo para o qual o arquivo foi validado. */
+        val model: BandModel,
         val compatibility: Compatibility,
     ) : FaceFile {
         val canInstall: Boolean get() = compatibility != Compatibility.INCOMPATIBLE
+        val compatibilityText: String get() = compatibility.describe(model)
     }
 
     /** Arquivo que não pode ser instalado, com o motivo. */
@@ -47,9 +64,6 @@ sealed interface FaceFile {
     )
 
     companion object {
-        const val SCREEN_WIDTH = 212
-        const val SCREEN_HEIGHT = 520
-
         /** Limite de sanidade. Faces de 212×520 costumam ter bem menos de 2 MB. */
         const val MAX_SIZE = 16 * 1024 * 1024
         private const val MIN_V2_SIZE = 0xa8
@@ -63,10 +77,11 @@ sealed interface FaceFile {
             "fi_FI", "in_ID", "el_GR", "ro_RO", "cs_CZ", "uk_UA", "hu_HU", "sk_SK", "ar_EG", "iw_IL", "zh_HK",
         )
 
-        fun parse(bytes: ByteArray): FaceFile {
+        /** Lê e valida [bytes] como uma face para [model]. */
+        fun parse(bytes: ByteArray, model: BandModel = BandModel.BAND_10): FaceFile {
             if (bytes.isEmpty()) return Rejected(bytes, "Arquivo vazio")
             if (bytes.size > MAX_SIZE) return Rejected(bytes, "Arquivo grande demais (${bytes.size / 1024} KB) para uma watch face")
-            if (bytes.size >= 2 && bytes[0] == 0x5a.toByte() && bytes[1] == 0xa5.toByte()) return parseV2(bytes)
+            if (bytes.size >= 2 && bytes[0] == 0x5a.toByte() && bytes[1] == 0xa5.toByte()) return parseV2(bytes, model)
             if (bytes.size >= 100 && V3_HEADER.indices.all { bytes[it] == V3_HEADER[it] }) {
                 val nameLength = bytes[20].toInt() and 0xff
                 val name = if (21 + nameLength <= bytes.size) String(bytes, 21, nameLength, Charsets.UTF_8) else null
@@ -85,7 +100,7 @@ sealed interface FaceFile {
             return Rejected(bytes, "Formato desconhecido: não começa com o cabeçalho de watch face (5A A5).")
         }
 
-        private fun parseV2(fw: ByteArray): FaceFile {
+        private fun parseV2(fw: ByteArray, model: BandModel): FaceFile {
             if (fw.size < MIN_V2_SIZE) return Rejected(fw, "Arquivo curto demais para uma watch face v2")
             val id = fw.cString(0x28, 64)
             if (id.isNullOrEmpty() || !id.all { it in '0'..'9' }) {
@@ -95,14 +110,25 @@ sealed interface FaceFile {
             FaceStructureCheck.check(fw)?.let { problem ->
                 return Rejected(fw, "Estrutura interna inválida: $problem. Enviar este arquivo poderia travar a banda.", name)
             }
+            val faceCount = FaceStructureCheck.faceCount(fw)
+            if (model.requiresAodFace && faceCount != 2) {
+                // miband-hack (device.ts): uma Mi Band 8 deixou de ligar com uma face sem a tela AOD.
+                return Rejected(
+                    fw,
+                    "Uma face para a ${model.label} precisa ter a tela normal e a AOD (sempre ligada); este arquivo tem " +
+                        "$faceCount tela(s). Uma face assim já impediu uma Mi Band 8 de ligar.",
+                    name,
+                )
+            }
             val preview = readPreviewHeader(fw)
             return V2(
                 bytes = fw,
                 id = id,
                 name = name,
                 preview = preview,
-                faceCount = FaceStructureCheck.faceCount(fw),
-                compatibility = compatibility(preview),
+                faceCount = faceCount,
+                model = model,
+                compatibility = compatibility(preview, model),
             )
         }
 
@@ -152,12 +178,13 @@ sealed interface FaceFile {
         }
 
         /** Mesma regra de XiaomiInstallHandler.validateInstallation / sameAspectRatio. */
-        fun compatibility(preview: PreviewHeader?): Compatibility {
+        fun compatibility(preview: PreviewHeader?, model: BandModel = BandModel.BAND_10): Compatibility {
             if (preview == null || preview.width == 0 || preview.height == 0) return Compatibility.UNKNOWN
-            if (preview.width == SCREEN_WIDTH && preview.height == SCREEN_HEIGHT) return Compatibility.EXACT
-            if (preview.width > SCREEN_WIDTH || preview.height > SCREEN_HEIGHT) return Compatibility.INCOMPATIBLE
+            if (preview.width == model.screenWidth && preview.height == model.screenHeight) return Compatibility.EXACT
+            if ((preview.width to preview.height) in model.knownPreviewSizes) return Compatibility.KNOWN_SIZE
+            if (preview.width > model.screenWidth || preview.height > model.screenHeight) return Compatibility.INCOMPATIBLE
             val previewRatio = preview.width.toDouble() / preview.height
-            val screenRatio = SCREEN_WIDTH.toDouble() / SCREEN_HEIGHT
+            val screenRatio = model.screenWidth.toDouble() / model.screenHeight
             return if (kotlin.math.abs(previewRatio / screenRatio - 1) <= 0.02) Compatibility.SAME_ASPECT else Compatibility.INCOMPATIBLE
         }
     }

@@ -92,7 +92,7 @@ class WatchfaceManager(
         replaceExisting: Boolean,
         onProgress: (InstallProgress) -> Unit,
     ) {
-        if (!file.canInstall) throw InstallException(file.compatibility.description)
+        if (!file.canInstall) throw InstallException(file.compatibilityText)
         if (!client.isReady) throw NotConnectedException()
 
         onProgress(InstallProgress("Lendo as faces instaladas…", null))

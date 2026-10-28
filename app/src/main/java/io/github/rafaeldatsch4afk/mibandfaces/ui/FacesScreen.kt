@@ -44,6 +44,7 @@ fun FacesScreen(vm: MainViewModel) {
     val faces by vm.watchfaces.faces.collectAsStateWithLifecycle()
     val band by vm.client.state.collectAsStateWithLifecycle()
     val apps by vm.miniApps.apps.collectAsStateWithLifecycle()
+    val model by vm.model.collectAsStateWithLifecycle()
     var toDelete by remember { mutableStateOf<InstalledFace?>(null) }
     var appToDelete by remember { mutableStateOf<InstalledApp?>(null) }
     val ready = band is BandState.Ready
@@ -100,7 +101,7 @@ fun FacesScreen(vm: MainViewModel) {
                     },
                 )
             }
-            if (ready) {
+            if (ready && model.supportsApps) {
                 item {
                     Row(Modifier.fillMaxWidth().padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -115,7 +116,7 @@ fun FacesScreen(vm: MainViewModel) {
                     item { Text("Nenhum mini-app instalado.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
-            items(if (ready) apps.orEmpty() else emptyList(), key = { "app:" + it.id }) { app ->
+            items(if (ready && model.supportsApps) apps.orEmpty() else emptyList(), key = { "app:" + it.id }) { app ->
                 ListItem(
                     colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
                     leadingContent = { Icon(Icons.Filled.Apps, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },

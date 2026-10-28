@@ -10,6 +10,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.rafaeldatsch4afk.mibandfaces.band.BandState
 import io.github.rafaeldatsch4afk.mibandfaces.band.AppAlreadyInstalledException
+import io.github.rafaeldatsch4afk.mibandfaces.band.BandModel
 import io.github.rafaeldatsch4afk.mibandfaces.band.FaceAlreadyInstalledException
 import io.github.rafaeldatsch4afk.mibandfaces.band.InstallProgress
 import io.github.rafaeldatsch4afk.mibandfaces.band.InstalledApp
@@ -73,6 +74,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _selected = MutableStateFlow(settings.deviceAddress?.let { FoundDevice(it, settings.deviceName) })
     val selected: StateFlow<FoundDevice?> = _selected.asStateFlow()
 
+    /** Modelo escolhido à mão; null = detectar pelo nome da banda. */
+    private val _manualModel = MutableStateFlow(settings.bandModel)
+    val manualModel: StateFlow<BandModel?> = _manualModel.asStateFlow()
+
+    /** Modelo usado para validar arquivos: o escolhido à mão, o detectado pelo nome ou a Mi Band 10. */
+    private val _model = MutableStateFlow(effectiveModel())
+    val model: StateFlow<BandModel> = _model.asStateFlow()
+
+    /** Último arquivo aberto, para validar de novo se o modelo mudar. */
+    private var lastFile: Pair<String, ByteArray>? = null
+
     /** Mensagem curta para o usuário (snackbar). */
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
@@ -117,8 +129,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         runCatching { watchfaces.refresh() }.onFailure {
                             log.warn("Não consegui ler a lista de faces: ${it.message}")
                         }
-                        runCatching { miniApps.refresh() }.onFailure {
-                            log.warn("Não consegui ler a lista de mini-apps: ${it.message}")
+                        // A Mi Band 8 não responde aos comandos de app: pedir a lista só custaria um timeout.
+                        if (_model.value.supportsApps) {
+                            runCatching { miniApps.refresh() }.onFailure {
+                                log.warn("Não consegui ler a lista de mini-apps: ${it.message}")
+                            }
                         }
                     }
                     is BandState.Disconnected, is BandState.Failed -> {
@@ -145,6 +160,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         settings.darkTheme = next
     }
 
+    private fun effectiveModel(): BandModel =
+        _manualModel.value ?: BandModel.fromDeviceName(_selected.value?.name) ?: BandModel.BAND_10
+
+    /** Escolhe o modelo à mão (null = automático) e ajusta o transporte recomendado. */
+    fun setModel(model: BandModel?) {
+        _manualModel.value = model
+        settings.bandModel = model
+        onModelMaybeChanged()
+    }
+
+    private fun onModelMaybeChanged() {
+        val model = effectiveModel()
+        if (model == _model.value) return
+        _model.value = model
+        log.info("Modelo: ${model.label} (tela ${model.screenText})")
+        setTransport(TransportKind.defaultFor(model))
+        // Valida de novo o arquivo escolhido, agora para o modelo certo.
+        lastFile?.let { (name, bytes) -> viewModelScope.launch { openFile(name, bytes) } }
+    }
+
     fun setTransport(kind: TransportKind) {
         _transport.value = kind
         settings.transport = kind
@@ -167,7 +202,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _selected.value = device
         settings.deviceAddress = device.address
         settings.deviceName = device.name
-        log.info("Banda escolhida: ${device.name ?: "?"} (${device.address})")
+        log.info("Banda escolhida: ${device.name ?: "?"} (${device.address})" + (device.model?.let { ", modelo ${it.label}" } ?: ""))
+        onModelMaybeChanged()
     }
 
     fun bond() = guarded {
@@ -361,21 +397,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
                 _install.value = InstallState.Idle
-                if (RpkFile.looksLikeRpk(bytes)) {
-                    openApp(name ?: "arquivo", bytes)
-                    return@launch
-                }
-                _selectedApp.value = null
-                val parsed = withContext(Dispatchers.Default) { FaceFile.parse(bytes) }
-                val preview = (parsed as? FaceFile.V2)?.preview?.let { header ->
-                    withContext(Dispatchers.Default) { runCatching { FacePreview.decode(bytes, header) }.getOrNull() }
-                }
-                _selectedFace.value = SelectedFace(name ?: "arquivo", parsed, preview)
-                _install.value = InstallState.Idle
-                when (parsed) {
-                    is FaceFile.V2 -> log.info("Arquivo ${name}: face v2 \"${parsed.name}\" id=${parsed.id}, ${bytes.size} bytes, preview=${parsed.preview?.let { "${it.width}x${it.height}" }}")
-                    is FaceFile.Rejected -> log.warn("Arquivo ${name} recusado: ${parsed.reason}")
-                }
+                openFile(name ?: "arquivo", bytes)
             } catch (e: Exception) {
                 log.error("Falha ao abrir o arquivo", e)
                 _message.value = "Falha ao abrir o arquivo: ${e.message}"
@@ -383,8 +405,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private suspend fun openApp(fileName: String, bytes: ByteArray) {
-        val parsed = withContext(Dispatchers.Default) { RpkFile.parse(bytes) }
+    /** Valida o arquivo para o modelo atual: mini-app se for um ZIP, senão watch face. */
+    private suspend fun openFile(name: String, bytes: ByteArray) {
+        lastFile = name to bytes
+        val model = _model.value
+        if (RpkFile.looksLikeRpk(bytes)) {
+            openApp(name, bytes, model)
+            return
+        }
+        _selectedApp.value = null
+        val parsed = withContext(Dispatchers.Default) { FaceFile.parse(bytes, model) }
+        val preview = (parsed as? FaceFile.V2)?.preview?.let { header ->
+            withContext(Dispatchers.Default) { runCatching { FacePreview.decode(bytes, header) }.getOrNull() }
+        }
+        _selectedFace.value = SelectedFace(name, parsed, preview)
+        when (parsed) {
+            is FaceFile.V2 -> log.info("Arquivo $name: face v2 \"${parsed.name}\" id=${parsed.id}, ${bytes.size} bytes, preview=${parsed.preview?.let { "${it.width}x${it.height}" }}, ${parsed.faceCount} tela(s), validada para a ${model.label}")
+            is FaceFile.Rejected -> log.warn("Arquivo $name recusado (${model.label}): ${parsed.reason}")
+        }
+    }
+
+    private suspend fun openApp(fileName: String, bytes: ByteArray, model: BandModel) {
+        val parsed = withContext(Dispatchers.Default) { RpkFile.parse(bytes, model) }
         val icon = (parsed as? RpkFile.Valid)?.icon?.let { png ->
             withContext(Dispatchers.Default) { runCatching { BitmapFactory.decodeByteArray(png, 0, png.size) }.getOrNull() }
         }
@@ -505,6 +547,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return when (_transport.value) {
             TransportKind.SPP -> SppTransport(a, device, log)
             TransportKind.BLE -> BleTransport(getApplication(), device, log)
+            TransportKind.BLE_V1 -> throw IllegalStateException("O BLE V1 (Mi Band 8) ainda não está disponível nesta versão")
         }
     }
 
