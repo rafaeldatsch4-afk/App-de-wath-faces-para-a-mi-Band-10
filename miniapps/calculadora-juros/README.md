@@ -6,16 +6,20 @@ não roda mini-apps.
 
 ## Como usar na banda
 
+Testado numa Mi Band 10 real (versão 1.0.0). Desde a 1.1.0 tudo é maior e a tela principal e o
+resultado rolam para baixo (arraste com o dedo). O tamanho de cada número é escolhido pelo
+comprimento do texto, para caber na largura da tela.
+
 A tela principal tem quatro barras, de cima para baixo:
 
 1. **Valor** (R$): toque para abrir o teclado, digite e toque em *OK*.
 2. **Parcelas (vezes)**: de 1 a 600, sem vírgula.
 3. **Tipo de juros**: toque em *Simples* ou *Composto* (o escolhido fica laranja).
-4. **Taxa de juros ao mês** (%): aceita vírgula, de 0 a 100.
+4. **Taxa ao mês** (%): aceita vírgula, de 0 a 100.
 
-Com tudo preenchido, o botão **Calcular** fica verde. O resultado mostra o total a pagar, quanto
+Com tudo preenchido, o botão **Calcular** (no fim da lista) fica verde. O resultado mostra o total a pagar, quanto
 disso é juros e o valor de cada parcela. *Voltar* mantém os números (para trocar o tipo, por
-exemplo); *Nova* limpa tudo.
+exemplo); *Nova conta* limpa tudo. O gesto de voltar da banda volta para a tela principal; nela, fecha o app.
 
 ## As contas
 

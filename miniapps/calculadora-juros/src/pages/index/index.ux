@@ -1,19 +1,25 @@
 <template>
   <div class="page">
-    <!-- Tela principal: barras de Valor, Parcelas, Tipo de juros e Taxa, e o botão Calcular -->
-    <div class="tela" if="{{telaPrincipal}}">
-      <text class="app">Juros</text>
-      <div class="barra" onclick="abrirValor">
-        <text class="rotulo">Valor</text>
-        <text class="{{valorCls}}">{{valorTexto}}</text>
-      </div>
-      <div class="barra" onclick="abrirParcelas">
-        <text class="rotulo">Parcelas (vezes)</text>
-        <text class="{{parcelasCls}}">{{parcelasTexto}}</text>
-      </div>
-      <div class="barra tipo">
-        <text class="rotuloTipo">Tipo de juros</text>
-        <div class="seg">
+    <!-- Tela principal (rola): Valor, Parcelas, Tipo de juros, Taxa e o botão Calcular -->
+    <list class="lista" if="{{telaPrincipal}}">
+      <list-item type="topo" class="itemTopo">
+        <text class="app">Juros</text>
+      </list-item>
+      <list-item type="valor" class="item">
+        <div class="barra" onclick="abrirValor">
+          <text class="rotulo">Valor</text>
+          <text class="{{valorCls}}">{{valorTexto}}</text>
+        </div>
+      </list-item>
+      <list-item type="parcelas" class="item">
+        <div class="barra" onclick="abrirParcelas">
+          <text class="rotulo">Parcelas (vezes)</text>
+          <text class="{{parcelasCls}}">{{parcelasTexto}}</text>
+        </div>
+      </list-item>
+      <list-item type="tipo" class="item">
+        <div class="barraTipo">
+          <text class="rotulo">Tipo de juros</text>
           <div class="{{simplesCls}}" onclick="escolherSimples">
             <text class="{{simplesTextoCls}}">Simples</text>
           </div>
@@ -21,18 +27,24 @@
             <text class="{{compostoTextoCls}}">Composto</text>
           </div>
         </div>
-      </div>
-      <div class="barra" onclick="abrirTaxa">
-        <text class="rotulo">Taxa de juros ao mês</text>
-        <text class="{{taxaCls}}">{{taxaTexto}}</text>
-      </div>
-      <div class="espaco"></div>
-      <div class="{{calcularCls}}" onclick="calcularConta">
-        <text class="{{calcularTextoCls}}">Calcular</text>
-      </div>
-    </div>
+      </list-item>
+      <list-item type="taxa" class="item">
+        <div class="barra" onclick="abrirTaxa">
+          <text class="rotulo">Taxa ao mês (%)</text>
+          <text class="{{taxaCls}}">{{taxaTexto}}</text>
+        </div>
+      </list-item>
+      <list-item type="calcular" class="item">
+        <div class="{{calcularCls}}" onclick="calcularConta">
+          <text class="{{calcularTextoCls}}">Calcular</text>
+        </div>
+      </list-item>
+      <list-item type="fim" class="itemFim">
+        <text class="fim"> </text>
+      </list-item>
+    </list>
 
-    <!-- Teclado de um campo -->
+    <!-- Teclado de um campo (não rola: ocupa a tela toda) -->
     <div class="tela" if="{{telaTeclado}}">
       <div class="topo">
         <text class="titulo">{{titulo}}</text>
@@ -56,27 +68,39 @@
       </div>
     </div>
 
-    <!-- Resultado -->
-    <div class="tela centro" if="{{telaResultado}}">
-      <text class="titulo">{{tituloResultado}}</text>
-      <text class="resumo">{{resumo1}}</text>
-      <text class="resumo">{{resumo2}}</text>
-      <text class="legenda">Total a pagar</text>
-      <text class="{{totalCls}}">{{total}}</text>
-      <text class="legenda">Juros</text>
-      <text class="linhaValor">{{juros}}</text>
-      <text class="legenda">Cada parcela</text>
-      <text class="linhaValor">{{parcela}}</text>
-      <div class="espaco"></div>
-      <div class="botoes">
+    <!-- Resultado (rola) -->
+    <list class="lista" if="{{telaResultado}}">
+      <list-item type="rtitulo" class="itemTopo">
+        <text class="{{tituloResultadoCls}}">{{tituloResultado}}</text>
+        <text class="{{resumo1Cls}}">{{resumo1}}</text>
+        <text class="{{resumo2Cls}}">{{resumo2}}</text>
+      </list-item>
+      <list-item type="rtotal" class="itemCentro">
+        <text class="legenda">Total a pagar</text>
+        <text class="{{totalCls}}">{{total}}</text>
+      </list-item>
+      <list-item type="rjuros" class="itemCentro">
+        <text class="legenda">Juros</text>
+        <text class="{{jurosCls}}">{{juros}}</text>
+      </list-item>
+      <list-item type="rparcela" class="itemCentro">
+        <text class="legenda">{{legendaParcela}}</text>
+        <text class="{{parcelaCls}}">{{parcela}}</text>
+      </list-item>
+      <list-item type="rvoltar" class="item">
         <div class="botao" onclick="voltar">
-          <text class="rotuloNav">Voltar</text>
+          <text class="rotuloBotao">Voltar</text>
         </div>
+      </list-item>
+      <list-item type="rnova" class="item">
         <div class="botao verde" onclick="novaConta">
-          <text class="rotuloOk">Nova</text>
+          <text class="rotuloBotaoOk">Nova conta</text>
         </div>
-      </div>
-    </div>
+      </list-item>
+      <list-item type="rfim" class="itemFim">
+        <text class="fim"> </text>
+      </list-item>
+    </list>
   </div>
 </template>
 
@@ -99,10 +123,25 @@ var TECLAS_DECIMAIS = NUMEROS.concat([[k(',', ',', 'fn'), k('0', '0', ''), k('�
 // Parcelas não têm vírgula: a tecla fica apagada.
 var TECLAS_INTEIRAS = NUMEROS.concat([[k('', '', 'apagada'), k('0', '0', ''), k('⌫', 'DEL', 'fn')]])
 
-var VAZIO = 'Tocar para digitar'
+var VAZIO = 'Tocar aqui'
 
-function tamanho(texto, a, b) {
-  return texto.length <= a ? 'grande' : texto.length <= b ? 'medio' : 'pequeno'
+// Maior letra (classe .fNN) em que o texto cabe em [largura] px. Cada caractere ocupa até
+// ~0,62 da altura da letra (medido com uma fonte mais larga que a da banda, por segurança).
+var FONTES = [40, 36, 32, 28, 24, 22, 20, 18, 16]
+function fonte(texto, maximo, largura) {
+  for (var i = 0; i < FONTES.length; i++) {
+    var f = FONTES[i]
+    if (f <= maximo && texto.length * f * 0.62 <= largura) return 'f' + f
+  }
+  return 'f16'
+}
+
+// Larguras úteis: tela 212 − 2×10 de margem; barras têm mais 2×12 por dentro.
+var LARGURA_TELA = 192
+var LARGURA_BARRA = 168
+
+function clsBarra(texto) {
+  return 'valor ' + fonte(texto, 32, LARGURA_BARRA)
 }
 
 export default {
@@ -131,18 +170,24 @@ export default {
     rascunho: '',
     titulo: '',
     mostrado: '',
-    digitadoCls: 'digitado grande',
+    digitadoCls: 'digitado f40',
     aviso: '',
-    avisoCls: 'dica',
+    avisoCls: 'dica f18',
     teclas: TECLAS_DECIMAIS,
     // Resultado
     tituloResultado: '',
     resumo1: '',
     resumo2: '',
     total: '',
-    totalCls: 'total grande',
+    tituloResultadoCls: 'tituloResultado f22',
+    resumo1Cls: 'resumo f18',
+    resumo2Cls: 'resumo f18',
+    totalCls: 'total f36',
     juros: '',
-    parcela: ''
+    jurosCls: 'linhaValor f28',
+    legendaParcela: 'Cada parcela',
+    parcela: '',
+    parcelaCls: 'linhaValor f28'
   },
 
   mostrar(tela) {
@@ -159,11 +204,11 @@ export default {
   atualizarPrincipal() {
     var t = this.textos
     this.valorTexto = this.textoBarra(0)
-    this.valorCls = t[0] === '' ? 'vazio' : 'valor'
+    this.valorCls = t[0] === '' ? 'vazio' : clsBarra(this.valorTexto)
     this.parcelasTexto = this.textoBarra(1)
-    this.parcelasCls = t[1] === '' ? 'vazio' : 'valor'
+    this.parcelasCls = t[1] === '' ? 'vazio' : clsBarra(this.parcelasTexto)
     this.taxaTexto = this.textoBarra(2)
-    this.taxaCls = t[2] === '' ? 'vazio' : 'valor'
+    this.taxaCls = t[2] === '' ? 'vazio' : clsBarra(this.taxaTexto)
     this.pronto = t[0] !== '' && t[1] !== '' && t[2] !== ''
     this.calcularCls = this.pronto ? 'calcular' : 'calcular off'
     this.calcularTextoCls = this.pronto ? 'calcularTexto' : 'calcularTextoOff'
@@ -180,12 +225,12 @@ export default {
   atualizarTeclado() {
     var texto = mostrarRascunho(CAMPOS[this.campo].id, this.rascunho)
     this.mostrado = texto
-    this.digitadoCls = 'digitado ' + tamanho(texto, 11, 14)
+    this.digitadoCls = 'digitado ' + fonte(texto, 40, LARGURA_TELA)
   },
 
   mostrarAviso(erro) {
     this.aviso = erro ? erro : CAMPOS[this.campo].dica
-    this.avisoCls = erro ? 'erro' : 'dica'
+    this.avisoCls = (erro ? 'erro ' : 'dica ') + fonte(this.aviso, 18, LARGURA_TELA)
   },
 
   abrir(indice) {
@@ -253,12 +298,18 @@ export default {
     var taxa = paraNumero(this.textos[2])
     var r = calcular(valor, parcelas, taxa, this.tipo)
     this.tituloResultado = this.tipo === 'simples' ? 'Juros simples' : 'Juros compostos'
-    this.resumo1 = reais(valor) + ' em ' + parcelas + 'x'
-    this.resumo2 = porcento(taxa) + ' ao mês'
+    this.resumo1 = reais(valor)
+    this.resumo2 = parcelas + 'x · ' + porcento(taxa) + ' ao mês'
     this.total = reais(r.montante)
-    this.totalCls = 'total ' + tamanho(this.total, 12, 16)
+    this.tituloResultadoCls = 'tituloResultado ' + fonte(this.tituloResultado, 24, LARGURA_TELA)
+    this.resumo1Cls = 'resumo ' + fonte(this.resumo1, 20, LARGURA_TELA)
+    this.resumo2Cls = 'resumo ' + fonte(this.resumo2, 20, LARGURA_TELA)
+    this.totalCls = 'total ' + fonte(this.total, 36, LARGURA_TELA)
     this.juros = reais(r.juros)
-    this.parcela = parcelas + 'x de ' + reais(r.parcela)
+    this.jurosCls = 'linhaValor ' + fonte(this.juros, 28, LARGURA_TELA)
+    this.legendaParcela = 'Cada parcela (' + parcelas + 'x)'
+    this.parcela = reais(r.parcela)
+    this.parcelaCls = 'linhaValor ' + fonte(this.parcela, 28, LARGURA_TELA)
     this.mostrar('resultado')
   },
 
@@ -287,80 +338,91 @@ export default {
 </script>
 
 <style>
+/* Tudo grande para ler no pulso: a tela principal e o resultado rolam para baixo. */
 .page {
   width: 100%;
   height: 100%;
   flex-direction: column;
   background-color: #000000;
-  padding: 40px 12px 44px 12px;
+  padding: 0 10px;
 }
 
-.tela {
+.lista {
   flex: 1;
   flex-direction: column;
 }
 
-.centro {
-  align-items: center;
+.item {
+  flex-direction: column;
+  margin-bottom: 10px;
 }
 
-.espaco {
-  flex: 1;
+/* A ponta da tela é arredondada: espaço em cima e embaixo. */
+.itemTopo {
+  flex-direction: column;
+  align-items: center;
+  padding-top: 34px;
+  margin-bottom: 10px;
+}
+
+.itemCentro {
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.itemFim {
+  height: 60px;
+}
+
+.fim {
+  font-size: 10px;
+  color: #000000;
 }
 
 /* Tela principal */
 .app {
-  font-size: 15px;
+  font-size: 22px;
   color: #8a8a8e;
   text-align: center;
-  margin-bottom: 8px;
 }
 
 .barra {
-  height: 72px;
-  margin: 4px 0;
-  padding: 0 14px;
-  border-radius: 22px;
+  height: 100px;
+  padding: 0 12px;
+  border-radius: 26px;
   flex-direction: column;
   justify-content: center;
   background-color: #1c1c1e;
 }
 
+.barraTipo {
+  padding: 12px;
+  border-radius: 26px;
+  flex-direction: column;
+  background-color: #1c1c1e;
+}
+
 .rotulo {
-  font-size: 14px;
+  font-size: 18px;
   color: #8a8a8e;
+  margin-bottom: 4px;
 }
 
 .valor {
-  font-size: 22px;
   color: #ffffff;
 }
 
+
 .vazio {
-  font-size: 16px;
-  color: #5a5a5e;
-}
-
-.tipo {
-  padding: 0 8px;
-}
-
-.rotuloTipo {
-  font-size: 14px;
-  color: #8a8a8e;
-  padding-left: 6px;
-  margin-bottom: 6px;
-}
-
-.seg {
-  flex-direction: row;
+  font-size: 20px;
+  color: #6e6e73;
 }
 
 .op {
-  flex: 1;
-  height: 36px;
-  margin: 0 2px;
-  border-radius: 18px;
+  height: 58px;
+  margin-top: 8px;
+  border-radius: 29px;
   justify-content: center;
   align-items: center;
   background-color: #2c2c2e;
@@ -371,20 +433,19 @@ export default {
 }
 
 .opTexto {
-  font-size: 14px;
+  font-size: 24px;
   color: #c7c7cc;
 }
 
 .opTextoSel {
-  font-size: 14px;
+  font-size: 24px;
   color: #000000;
   font-weight: bold;
 }
 
 .calcular {
-  height: 52px;
-  margin: 0 10px;
-  border-radius: 26px;
+  height: 76px;
+  border-radius: 38px;
   justify-content: center;
   align-items: center;
   background-color: #30d158;
@@ -395,51 +456,62 @@ export default {
 }
 
 .calcularTexto {
-  font-size: 20px;
+  font-size: 30px;
   color: #000000;
   font-weight: bold;
 }
 
 .calcularTextoOff {
-  font-size: 20px;
-  color: #5a5a5e;
+  font-size: 30px;
+  color: #6e6e73;
   font-weight: bold;
 }
 
 /* Teclado */
+.tela {
+  flex: 1;
+  flex-direction: column;
+  padding: 30px 0 28px 0;
+}
+
 .topo {
-  height: 132px;
+  height: 124px;
   flex-direction: column;
   align-items: center;
 }
 
 .titulo {
-  font-size: 20px;
+  font-size: 22px;
   color: #ff9f0a;
   text-align: center;
 }
 
 .digitado {
   color: #ffffff;
-  margin-top: 14px;
+  margin-top: 8px;
   text-align: center;
 }
 
-.grande { font-size: 30px; }
-.medio { font-size: 24px; }
-.pequeno { font-size: 18px; }
+/* Tamanhos de letra escolhidos no script conforme o texto (função fonte). */
+.f40 { font-size: 40px; }
+.f36 { font-size: 36px; }
+.f32 { font-size: 32px; }
+.f28 { font-size: 28px; }
+.f24 { font-size: 24px; }
+.f22 { font-size: 22px; }
+.f20 { font-size: 20px; }
+.f18 { font-size: 18px; }
+.f16 { font-size: 16px; }
 
 .dica {
-  font-size: 13px;
   color: #8a8a8e;
-  margin-top: 6px;
+  margin-top: 4px;
   text-align: center;
 }
 
 .erro {
-  font-size: 13px;
   color: #ff453a;
-  margin-top: 6px;
+  margin-top: 4px;
   text-align: center;
 }
 
@@ -456,7 +528,7 @@ export default {
 .tecla {
   flex: 1;
   margin: 3px;
-  border-radius: 20px;
+  border-radius: 22px;
   justify-content: center;
   align-items: center;
   background-color: #2c2c2e;
@@ -468,32 +540,36 @@ export default {
 .apagada { background-color: #000000; }
 
 .rotuloTecla {
-  font-size: 26px;
+  font-size: 36px;
   color: #ffffff;
 }
 
 .rotuloNav {
-  font-size: 17px;
+  font-size: 19px;
   color: #ffffff;
 }
 
 .rotuloOk {
-  font-size: 17px;
+  font-size: 24px;
   color: #000000;
   font-weight: bold;
 }
 
 /* Resultado */
+.tituloResultado {
+  color: #ff9f0a;
+  text-align: center;
+  margin-bottom: 6px;
+}
+
 .resumo {
-  font-size: 13px;
   color: #c7c7cc;
   text-align: center;
 }
 
 .legenda {
-  font-size: 14px;
+  font-size: 19px;
   color: #8a8a8e;
-  margin-top: 14px;
 }
 
 .total {
@@ -502,27 +578,31 @@ export default {
   text-align: center;
 }
 
+
 .linhaValor {
-  font-size: 20px;
   color: #ffffff;
   text-align: center;
 }
 
-.botoes {
-  flex-direction: row;
-  width: 100%;
-  padding: 0 6px;
-}
 
 .botao {
-  flex: 1;
-  height: 52px;
-  margin: 0 3px;
-  border-radius: 26px;
+  height: 72px;
+  border-radius: 36px;
   justify-content: center;
   align-items: center;
   background-color: #3a3a3c;
 }
 
 .verde { background-color: #30d158; }
+
+.rotuloBotao {
+  font-size: 26px;
+  color: #ffffff;
+}
+
+.rotuloBotaoOk {
+  font-size: 26px;
+  color: #000000;
+  font-weight: bold;
+}
 </style>
