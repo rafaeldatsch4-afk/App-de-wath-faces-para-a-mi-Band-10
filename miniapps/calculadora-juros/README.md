@@ -6,20 +6,21 @@ não roda mini-apps.
 
 ## Como usar na banda
 
-Testado numa Mi Band 10 real (versão 1.0.0). Desde a 1.1.0 tudo é maior e a tela principal e o
-resultado rolam para baixo (arraste com o dedo). O tamanho de cada número é escolhido pelo
-comprimento do texto, para caber na largura da tela.
+Histórico na banda: a 1.0.0 rodou numa Mi Band 10 real, mas ficou pequena; a 1.1.0 usou o
+componente `list` para rolar a tela e ficou com a tela preta. Desde a 1.2.0 as letras são grandes e
+os campos ficam em duas telas, sem rolar, usando só `div` e `text` (o teste da página recusa
+qualquer outra tag). O tamanho de cada número é escolhido pelo comprimento do texto, para caber.
 
-A tela principal tem quatro barras, de cima para baixo:
+**Tela 1:** **Valor** (R$) e **Parcelas (vezes)**, de 1 a 600. Toque numa barra para abrir o
+teclado, digite e toque em *OK*. Depois, *Próximo*.
 
-1. **Valor** (R$): toque para abrir o teclado, digite e toque em *OK*.
-2. **Parcelas (vezes)**: de 1 a 600, sem vírgula.
-3. **Tipo de juros**: toque em *Simples* ou *Composto* (o escolhido fica laranja).
-4. **Taxa ao mês** (%): aceita vírgula, de 0 a 100.
+**Tela 2:** **Tipo de juros** (*Simples* ou *Composto*; o escolhido fica laranja) e **Taxa ao mês**
+(%, aceita vírgula, de 0 a 100). Com tudo preenchido, o botão verde **Calcular** aparece. Tocar em
+"‹ Juros · 2 de 2" volta para a tela 1.
 
-Com tudo preenchido, o botão **Calcular** (no fim da lista) fica verde. O resultado mostra o total a pagar, quanto
-disso é juros e o valor de cada parcela. *Voltar* mantém os números (para trocar o tipo, por
-exemplo); *Nova conta* limpa tudo. O gesto de voltar da banda volta para a tela principal; nela, fecha o app.
+O resultado mostra o total a pagar, quanto disso é juros e o valor de cada parcela. *Voltar* volta
+para a tela 2 com os números (para trocar o tipo, por exemplo); *Nova* limpa tudo. O gesto de voltar
+da banda vai sempre para a tela anterior; na tela 1, fecha o app.
 
 ## As contas
 
@@ -41,7 +42,7 @@ composto dividido pelas parcelas. Este app não faz a Tabela Price.
 ```
 src/manifest.json          pacote io.github.rafaeldatsch4afk.juros, sem permissões especiais
 src/app.ux
-src/pages/index/index.ux   telas: principal (barras), teclado e resultado
+src/pages/index/index.ux   telas 1 e 2 (barras), teclado e resultado
 src/common/juros.js        lógica pura (digitação, validação, contas, formatação em reais)
 src/common/logo.png        ícone
 test/juros-check.mjs       conferência da lógica com node

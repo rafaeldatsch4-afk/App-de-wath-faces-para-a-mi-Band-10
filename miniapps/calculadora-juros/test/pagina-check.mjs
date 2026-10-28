@@ -22,6 +22,10 @@ const pagina = (await import(pathToFileURL(arquivo).href)).default;
 rmSync(pasta, { recursive: true });
 
 // --- Conferências estáticas do template ---
+// Só as tags que já rodaram na Mi Band 10 (versão 1.0.0). A 1.1.0 usou <list> e ficou com a tela preta.
+for (const [, tag] of template.matchAll(/<([a-z][\w-]*)/g)) {
+  assert.ok(['template', 'div', 'text'].includes(tag), `tag não testada na banda: <${tag}>`);
+}
 const dados = Object.keys(pagina.private);
 const metodos = Object.keys(pagina).filter((k) => typeof pagina[k] === 'function');
 const variaveisDeLaco = ['linha', 't'];
@@ -87,13 +91,11 @@ function novaPagina() {
 
 const p = novaPagina();
 conferirClasses(p);
-assert.equal(p.telaPrincipal, true);
+assert.equal(p.tela1, true);
 assert.equal(p.valorTexto, 'Tocar aqui');
-assert.equal(p.calcularCls, 'calcular off');
-p.calcularConta(); // não faz nada sem os campos
-assert.equal(p.telaPrincipal, true);
+assert.equal(p.calcularTexto, 'Preencha tudo');
 
-// Valor: 1500
+// Tela 1 → Valor: 1500
 p.abrirValor();
 assert.equal(p.telaTeclado, true);
 assert.equal(p.titulo, 'Valor');
@@ -101,9 +103,8 @@ assert.equal(p.aviso, 'em reais');
 for (const k of '1500') p.tocar(k);
 assert.equal(p.mostrado, 'R$ 1.500');
 p.confirmar();
-assert.equal(p.telaPrincipal, true);
+assert.equal(p.tela1, true); // volta para a tela de onde veio
 assert.equal(p.valorTexto, 'R$ 1.500,00');
-assert.equal(p.valorCls, 'valor f24');
 
 // Parcelas: tenta 0 (erro), depois 12; a vírgula não existe nesse teclado
 p.abrirParcelas();
@@ -121,19 +122,30 @@ assert.ok(p.avisoCls.startsWith('dica '));
 p.confirmar();
 assert.equal(p.parcelasTexto, '12x');
 
-// Cancelar não muda nada
+// Cancelar não muda nada; o gesto de voltar no teclado também volta para a tela 1
 p.abrirParcelas();
 p.tocar('9');
 p.cancelar();
 assert.equal(p.parcelasTexto, '12x');
+assert.equal(p.tela1, true);
+p.abrirParcelas();
+assert.equal(p.onBackPress(), true);
+assert.equal(p.tela1, true);
 
-// Taxa: 2,5
+// Tela 2: Calcular desligado até a taxa
+p.irTela2();
+assert.equal(p.tela2, true);
+assert.equal(p.calcularCls, 'botaoGrande off');
+p.calcularConta();
+assert.equal(p.tela2, true);
 p.abrirTaxa();
 for (const k of '2,5') p.tocar(k);
 assert.equal(p.mostrado, '2,5%');
 p.confirmar();
+assert.equal(p.tela2, true); // volta para a tela 2
 assert.equal(p.taxaTexto, '2,5%');
-assert.equal(p.calcularCls, 'calcular');
+assert.equal(p.calcularCls, 'botaoGrande verde');
+assert.equal(p.calcularTexto, 'Calcular');
 
 // Compostos (padrão)
 assert.equal(p.compostoCls, 'op sel');
@@ -147,15 +159,17 @@ assert.equal(p.legendaParcela, 'Cada parcela (12x)');
 assert.equal(p.resumo1, 'R$ 1.500,00');
 assert.equal(p.resumo2, '12x · 2,5% ao mês');
 
-// Gesto de voltar no resultado: volta para a principal sem fechar o app
+// Gesto de voltar: resultado → tela 2 → tela 1 → fecha o app
 assert.equal(p.onBackPress(), true);
-assert.equal(p.telaPrincipal, true);
+assert.equal(p.tela2, true);
+assert.equal(p.onBackPress(), true);
+assert.equal(p.tela1, true);
 assert.equal(p.saiu, false);
-// Na principal, fecha o app
 assert.equal(p.onBackPress(), true);
 assert.equal(p.saiu, true);
 
 // Troca para simples e recalcula com os mesmos números
+p.irTela2();
 p.escolherSimples();
 assert.equal(p.simplesCls, 'op sel');
 assert.equal(p.compostoCls, 'op');
@@ -163,10 +177,14 @@ p.calcularConta();
 assert.equal(p.tituloResultado, 'Juros simples');
 assert.equal(p.total, 'R$ 1.950,00'); // 1500 × (1 + 0,025 × 12)
 assert.equal(p.parcela, 'R$ 162,50');
+p.voltar();
+assert.equal(p.tela2, true);
 
-// Nova conta limpa tudo
+// Nova conta limpa tudo e volta para a tela 1
+p.calcularConta();
 p.novaConta();
+assert.equal(p.tela1, true);
 assert.equal(p.valorTexto, 'Tocar aqui');
-assert.equal(p.calcularCls, 'calcular off');
+assert.equal(p.calcularCls, 'botaoGrande off');
 
 console.log('página: template, estilos e toques conferidos');
