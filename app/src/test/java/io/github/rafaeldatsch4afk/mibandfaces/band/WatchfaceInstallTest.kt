@@ -4,6 +4,7 @@ import io.github.rafaeldatsch4afk.mibandfaces.face.FaceFile
 import io.github.rafaeldatsch4afk.mibandfaces.log.PacketLog
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.LinkConfig
 import io.github.rafaeldatsch4afk.mibandfaces.testutil.FaceBand
+import io.github.rafaeldatsch4afk.mibandfaces.testutil.FakeBandTransport
 import io.github.rafaeldatsch4afk.mibandfaces.testutil.FaceBuilder
 import io.github.rafaeldatsch4afk.mibandfaces.util.crc32
 import io.github.rafaeldatsch4afk.mibandfaces.util.hexToBytes
@@ -154,6 +155,17 @@ class WatchfaceInstallTest {
         assertTrue(band.faces.none { it.id == "300" })
         withTimeout(2_000) { while (!band.transport.closed) delay(10) }
         assertEquals(BandState.Disconnected, client.state.value)
+    }
+
+    @Test
+    fun installsOverSppV1() = runBlocking {
+        val band = FaceBand(key, FakeBandTransport(versionPayload = "01".hexToBytes())).apply { chunkSize = 512 }
+        val (client, manager) = connected(band)
+        manager.install(face, replaceExisting = false) {}
+        // O arquivo chegou inteiro (MD5 e CRC conferidos) pelo canal 5, cifrado com o contador 0.
+        assertEquals(true, band.uploadOk)
+        assertTrue(band.faces.any { it.id == "300" && it.active })
+        client.disconnect()
     }
 
     @Test

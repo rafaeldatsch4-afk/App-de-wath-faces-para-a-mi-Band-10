@@ -71,6 +71,21 @@ class BandClientAuthTest {
     }
 
     @Test
+    fun authenticatesOverSppV1WithCcm() = runBlocking {
+        // Firmware antigo da Mi Band 9: responde à sondagem com versão 1.
+        val band = FakeBand(key, FakeBandTransport(versionPayload = "01".hexToBytes()))
+        val client = client()
+        client.connect(band.transport, key)
+        assertTrue(client.state.value is BandState.Ready)
+        assertTrue((client.state.value as BandState.Ready).transport.contains("SPP V1"))
+        // Hora, informações e bateria foram e voltaram cifrados com AES-CCM.
+        assertTrue(band.commandsReceived.any { it.type == 2 && it.subtype == 3 })
+        assertEquals("Xiaomi Smart Band 10", client.info.value.model)
+        assertEquals(77, client.info.value.batteryPercent)
+        client.disconnect()
+    }
+
+    @Test
     fun authenticatesAndReadsInfo() = runBlocking {
         val band = FakeBand(key)
         val client = client()

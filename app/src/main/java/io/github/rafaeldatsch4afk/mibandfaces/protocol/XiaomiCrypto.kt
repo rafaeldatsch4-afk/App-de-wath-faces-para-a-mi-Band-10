@@ -19,9 +19,10 @@ class SessionKeys(
 /**
  * Criptografia do protocolo Xiaomi, portada de XiaomiAuthService (Gadgetbridge).
  *
- * O Android não oferece AES-CCM no javax.crypto (o Gadgetbridge usa BouncyCastle). Como só
- * precisamos cifrar um pacote na autenticação, o CCM foi implementado aqui sobre AES/ECB,
- * seguindo a RFC 3610. Os testes conferem o resultado com o BouncyCastle.
+ * O Android não oferece AES-CCM no javax.crypto (o Gadgetbridge usa BouncyCastle). O CCM foi
+ * implementado aqui sobre AES/ECB, seguindo a RFC 3610: na autenticação (todas as bandas) e em
+ * todos os pacotes do SPP V1 e do BLE V1 (Mi Band 8 e firmwares antigos da 9). Os testes conferem
+ * o resultado com o BouncyCastle.
  */
 object XiaomiCrypto {
     private val MIWEAR_AUTH = "miwear-auth".toByteArray(Charsets.US_ASCII)
@@ -127,9 +128,38 @@ object XiaomiCrypto {
         return out
     }
 
+    /**
+     * Decifra `textoCifrado ‖ tag` e confere a tag. Lança [CcmTagException] se a tag não bater.
+     * No CCM a parte de contador é simétrica: cifrar o texto cifrado devolve o texto puro.
+     */
+    fun aesCcmDecrypt(key: ByteArray, nonce: ByteArray, data: ByteArray, tagLength: Int = 4): ByteArray {
+        if (data.size < tagLength) throw CcmTagException("pacote menor que a tag CCM")
+        val body = data.copyOfRange(0, data.size - tagLength)
+        val plain = aesCcmEncrypt(key, nonce, body, tagLength).copyOfRange(0, body.size)
+        val expected = aesCcmEncrypt(key, nonce, plain, tagLength).copyOfRange(body.size, body.size + tagLength)
+        val tag = data.copyOfRange(body.size, data.size)
+        if (!java.security.MessageDigest.isEqual(expected, tag)) throw CcmTagException("tag CCM não confere")
+        return plain
+    }
+
     /** Nonce CCM de 12 bytes: `nonce4 ‖ 00000000 ‖ contador (u32 LE)` (XiaomiAuthService.encrypt). */
     fun ccmPacketNonce(nonce4: ByteArray, counter: Int): ByteArray =
         nonce4 + byteArrayOf(0, 0, 0, 0) + byteArrayOf(counter.toByte(), (counter ushr 8).toByte(), (counter ushr 16).toByte(), (counter ushr 24).toByte())
+}
+
+class CcmTagException(message: String) : Exception(message)
+
+/**
+ * Cifra "V1" (SPP V1 e BLE V1) depois da autenticação: AES-CCM com tag de 4 bytes. Para cifrar, o
+ * nonce leva um contador escolhido por quem envia; para decifrar, o contador é sempre 0
+ * (XiaomiAuthService.encrypt/decrypt no Gadgetbridge).
+ */
+class V1Cipher(private val keys: SessionKeys) {
+    fun encrypt(plain: ByteArray, counter: Int): ByteArray =
+        XiaomiCrypto.aesCcmEncrypt(keys.encryptionKey, XiaomiCrypto.ccmPacketNonce(keys.encryptionNonce, counter), plain)
+
+    fun decrypt(cipher: ByteArray): ByteArray =
+        XiaomiCrypto.aesCcmDecrypt(keys.decryptionKey, XiaomiCrypto.ccmPacketNonce(keys.decryptionNonce, 0), cipher)
 }
 
 /** Cifra do SPP V2 depois da autenticação: AES-CTR com IV = chave (encryptV2/decryptV2). */

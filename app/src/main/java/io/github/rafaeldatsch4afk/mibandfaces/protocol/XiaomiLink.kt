@@ -53,22 +53,23 @@ data class LinkConfig(
  *
  * Os ACKs são cumulativos e a banda aceita quadros estritamente em ordem (go-back-N): um ACK(n)
  * confirma todos os quadros até n; um NACK(n) diz que a banda espera o quadro n.
+ *
+ * Se a banda responder à sondagem com versão < 2, ou não responder em 5 s, a sessão segue em
+ * SPP V1 (XiaomiSppProtocolV1): sem ACK, com AES-CCM por pacote. Firmwares antigos da Mi Band 9
+ * podem estar nesse caso; a Mi Band 10 real fala V2.
  */
 class XiaomiLink(
     private val transport: BandTransport,
     private val log: PacketLog,
     private val config: LinkConfig = LinkConfig(),
-) : BandTransport.Listener {
+) : BandTransport.Listener, BandLink {
 
-    interface Listener {
-        /** Pacote DATA recebido, já decifrado se necessário. */
-        fun onPacket(channel: Int, body: ByteArray)
+    override val description: String get() = transport.description + if (mode == Mode.V1) ", SPP V1" else ""
 
-        /** O enlace caiu. [cause] é null quando fechado por nós. */
-        fun onClosed(cause: Throwable?)
-    }
+    private enum class Mode { PROBING, V1, V2, CLOSED }
 
-    private enum class Mode { PROBING, V2, CLOSED }
+    /** Bytes a escrever e, no V1 (sem ACK), quem espera a escrita terminar. */
+    private class Outgoing(val bytes: ByteArray, val written: CompletableDeferred<Unit>? = null)
 
     private class Outstanding(val seq: Int, val frame: ByteArray, val acked: CompletableDeferred<Unit>) {
         var nacks = 0
@@ -83,9 +84,9 @@ class XiaomiLink(
     @Volatile
     private var lastTxAt = 0L
     private val lock = Any()
-    private val writeQueue = Channel<ByteArray>(Channel.UNLIMITED)
+    private val writeQueue = Channel<Outgoing>(Channel.UNLIMITED)
 
-    private var listener: Listener? = null
+    private var listener: BandLink.Listener? = null
     private var mode = Mode.PROBING
     private var v1Buffer = ByteArray(0)
     private val parser = SppV2.Parser { log.warn("Quadro descartado: $it") }
@@ -105,9 +106,20 @@ class XiaomiLink(
      */
     private var nackResentFor: Int? = null
 
-    /** Cifra usada nos pacotes com opcode 2. Definida pela autenticação. */
+    /** Cifra usada nos pacotes com opcode 2 (V2). Definida pela autenticação. */
     @Volatile
     var cipher: PayloadCipher? = null
+
+    /** Cifra do V1 (AES-CCM). Definida pela autenticação. */
+    @Volatile
+    private var v1Cipher: V1Cipher? = null
+
+    /** V1: serial do próximo pacote e contador do nonce CCM (o primeiro pacote cifrado usa 1). */
+    private var v1Serial = 0
+    private var v1Counter = 0
+
+    /** Se a sessão está em SPP V1. */
+    val isV1: Boolean get() = synchronized(lock) { mode == Mode.V1 }
 
     /** Configuração de sessão recebida da banda (para a tela de status e logs). */
     @Volatile
@@ -116,20 +128,22 @@ class XiaomiLink(
 
     /** Janela efetiva de envio (mínimo entre a nossa e a da banda). */
     @Volatile
-    var effectiveWindow: Int = 1
+    override var effectiveWindow: Int = 1
         private set
 
-    val isOpen: Boolean get() = synchronized(lock) { mode != Mode.CLOSED }
+    override val isOpen: Boolean get() = synchronized(lock) { mode != Mode.CLOSED }
 
-    suspend fun open(listener: Listener) {
+    override suspend fun open(listener: BandLink.Listener) {
         this.listener = listener
         transport.open(this)
         scope.launch {
-            for (frame in writeQueue) {
+            for (item in writeQueue) {
                 try {
-                    transport.write(frame)
+                    transport.write(item.bytes)
                     lastTxAt = System.currentTimeMillis()
+                    item.written?.complete(Unit)
                 } catch (e: Exception) {
+                    item.written?.completeExceptionally(LinkClosedException("Falha ao escrever na banda: ${e.message}", e))
                     fail(LinkClosedException("Falha ao escrever na banda: ${e.message}", e))
                     break
                 }
@@ -137,7 +151,12 @@ class XiaomiLink(
         }
         try {
             if (transport.needsVersionProbe) probeVersion() else synchronized(lock) { mode = Mode.V2 }
-            startSession()
+            if (isV1) {
+                effectiveWindow = 1
+                log.info("Sessão SPP V1: sem ACK nem janela; cada pacote vai uma vez, como no Gadgetbridge")
+            } else {
+                startSession()
+            }
         } catch (e: Exception) {
             fail(e)
             throw e
@@ -149,16 +168,16 @@ class XiaomiLink(
         synchronized(lock) { versionReply = reply }
         val request = SppV1.versionRequest()
         log.tx("SPP V1 pedido de versão", request)
-        writeQueue.trySend(request)
+        writeQueue.trySend(Outgoing(request))
         val version = try {
             withTimeout(config.versionProbeTimeoutMs) { reply.await() }
         } catch (e: TimeoutCancellationException) {
-            throw LinkException("A banda não respondeu ao pedido de versão SPP. Este app só fala SPP V2 (o da Mi Band 10).")
+            // XiaomiSppSupport: sem resposta à sondagem, a banda fala V1.
+            synchronized(lock) { if (mode == Mode.PROBING) mode = Mode.V1 }
+            log.warn("A banda não respondeu ao pedido de versão: seguindo em SPP V1, como o Gadgetbridge")
+            return
         }
-        log.info("Versão do protocolo SPP da banda: ${version.toHex()}")
-        if (version.isEmpty() || (version[0].toInt() and 0xff) < 2) {
-            throw LinkException("A banda usa SPP V1 (versão ${version.toHex()}). Este app só suporta SPP V2.")
-        }
+        log.info("Versão do protocolo SPP da banda: ${version.toHex()}" + if (isV1) " → SPP V1" else " → SPP V2")
     }
 
     private suspend fun startSession() {
@@ -166,7 +185,7 @@ class XiaomiLink(
         synchronized(lock) { sessionReply = reply }
         val request = SppV2.sessionStartRequest()
         log.tx("V2 SESSION_CONFIG (início)", request)
-        writeQueue.trySend(request)
+        writeQueue.trySend(Outgoing(request))
         val session = try {
             withTimeout(config.sessionTimeoutMs) { reply.await() }
         } catch (e: TimeoutCancellationException) {
@@ -182,17 +201,20 @@ class XiaomiLink(
         )
     }
 
-    /** Envia um pacote DATA e espera o ACK da banda. */
-    suspend fun send(channel: Int, body: ByteArray, encrypt: Boolean) {
-        enqueue(channel, body, encrypt).await()
+    override fun onAuthenticated(keys: SessionKeys) {
+        synchronized(lock) {
+            if (mode == Mode.V1) v1Cipher = V1Cipher(keys) else cipher = SppV2Cipher(keys)
+        }
     }
 
     /**
      * Enfileira um pacote DATA. Suspende enquanto a janela de envio estiver cheia. O Deferred
      * retornado completa quando a banda confirmar (ACK) o quadro, ou falha se o enlace cair.
+     * No V1, que não tem ACK, completa quando o pacote for escrito no socket.
      */
-    suspend fun enqueue(channel: Int, body: ByteArray, encrypt: Boolean): Deferred<Unit> {
+    override suspend fun enqueue(channel: Int, body: ByteArray, encrypt: Boolean): Deferred<Unit> {
         if (!isOpen) throw LinkClosedException("Conexão com a banda encerrada")
+        if (isV1) return enqueueV1(channel, body, encrypt)
         val payloadBody = if (encrypt) {
             (cipher ?: throw LinkException("Sessão ainda não autenticada")).encrypt(body)
         } else {
@@ -212,14 +234,52 @@ class XiaomiLink(
             nextSeq = (nextSeq + 1) and 0xff
             item = Outstanding(seq, SppV2.encode(SppV2.TYPE_DATA, seq, payload), CompletableDeferred())
             outstanding.addLast(item)
-            writeQueue.trySend(item.frame)
+            writeQueue.trySend(Outgoing(item.frame))
             armTimeoutLocked()
         }
         log.tx("V2 DATA seq=${item.seq} canal=$channel op=$opcode", item.frame)
         return item.acked
     }
 
-    fun close() {
+    /**
+     * SPP V1 (XiaomiSppPacketV1.encode): comandos cifrados levam o contador do nonce (u16) na
+     * frente; o canal de arquivos é sempre cifrado com o contador 0; os comandos de autenticação vão
+     * em texto puro com dataType 2.
+     */
+    private fun enqueueV1(channel: Int, body: ByteArray, encrypt: Boolean): Deferred<Unit> {
+        val written = CompletableDeferred<Unit>()
+        val frame: ByteArray
+        val what: String
+        synchronized(lock) {
+            if (mode == Mode.CLOSED) throw LinkClosedException("Conexão com a banda encerrada")
+            val serial = v1Serial
+            v1Serial = (v1Serial + 1) and 0xff
+            when (channel) {
+                SppV2.CHANNEL_PROTOBUF -> if (encrypt) {
+                    val c = v1Cipher ?: throw LinkException("Sessão ainda não autenticada")
+                    v1Counter++
+                    val counter = v1Counter
+                    val payload = byteArrayOf(counter.toByte(), (counter ushr 8).toByte()) + c.encrypt(body, counter)
+                    frame = SppV1.send(SppV1.CHANNEL_PROTO_TX, serial, SppV1.DATA_TYPE_ENCRYPTED, payload)
+                    what = "V1 comando cifrado serial=$serial contador=$counter"
+                } else {
+                    frame = SppV1.send(SppV1.CHANNEL_PROTO_TX, serial, SppV1.DATA_TYPE_AUTH, body)
+                    what = "V1 comando (autenticação) serial=$serial"
+                }
+                SppV2.CHANNEL_DATA -> {
+                    val c = v1Cipher ?: throw LinkException("Sessão ainda não autenticada")
+                    frame = SppV1.send(SppV1.CHANNEL_MASS, serial, SppV1.DATA_TYPE_ENCRYPTED, c.encrypt(body, 0))
+                    what = "V1 dados serial=$serial"
+                }
+                else -> throw LinkException("Canal $channel não existe no SPP V1")
+            }
+            writeQueue.trySend(Outgoing(frame, written))
+        }
+        log.tx(what, frame)
+        return written
+    }
+
+    override fun close() {
         fail(null)
     }
 
@@ -232,7 +292,7 @@ class XiaomiLink(
         synchronized(lock) {
             when (mode) {
                 Mode.CLOSED -> return
-                Mode.PROBING -> handleProbingLocked(bytes)
+                Mode.PROBING, Mode.V1 -> handleV1BytesLocked(bytes, deliveries)
                 Mode.V2 -> for (frame in parser.feed(bytes)) handleFrameLocked(frame, deliveries)
             }
         }
@@ -250,7 +310,8 @@ class XiaomiLink(
         fail(cause?.let { LinkClosedException("A conexão com a banda caiu: ${it.message}", it) })
     }
 
-    private fun handleProbingLocked(bytes: ByteArray) {
+    /** Sondagem (resposta de versão em V1) e, se a banda ficar no V1, a sessão inteira. */
+    private fun handleV1BytesLocked(bytes: ByteArray, deliveries: MutableList<Pair<Int, ByteArray>>) {
         v1Buffer += bytes
         while (v1Buffer.isNotEmpty()) {
             when (val result = SppV1.parse(v1Buffer)) {
@@ -258,21 +319,53 @@ class XiaomiLink(
                 is SppV1.ParseResult.Invalid -> v1Buffer = v1Buffer.copyOfRange(minOf(result.skip, v1Buffer.size), v1Buffer.size)
                 is SppV1.ParseResult.Complete -> {
                     val rest = v1Buffer.copyOfRange(result.size, v1Buffer.size)
-                    v1Buffer = ByteArray(0)
-                    if (result.packet.channel == SppV1.CHANNEL_VERSION) {
-                        // A partir daqui tudo chega em SPP V2.
-                        mode = Mode.V2
-                        versionReply?.complete(result.packet.payload)
-                        if (rest.isNotEmpty()) {
-                            for (frame in parser.feed(rest)) handleFrameLocked(frame, mutableListOf())
-                        }
-                        return
-                    }
-                    log.warn("Pacote SPP V1 inesperado no canal ${result.packet.channel}")
                     v1Buffer = rest
+                    val packet = result.packet
+                    if (mode == Mode.PROBING && packet.channel == SppV1.CHANNEL_VERSION) {
+                        val version = packet.payload
+                        val v2 = version.isNotEmpty() && (version[0].toInt() and 0xff) >= 2
+                        mode = if (v2) Mode.V2 else Mode.V1
+                        versionReply?.complete(version)
+                        if (v2) {
+                            // A partir daqui tudo chega em SPP V2.
+                            v1Buffer = ByteArray(0)
+                            if (rest.isNotEmpty()) for (frame in parser.feed(rest)) handleFrameLocked(frame, deliveries)
+                            return
+                        }
+                        continue
+                    }
+                    if (mode == Mode.V1) handleV1PacketLocked(packet, deliveries)
+                    else log.warn("Pacote SPP V1 inesperado no canal ${packet.channel} durante a sondagem")
                 }
             }
         }
+    }
+
+    private fun handleV1PacketLocked(packet: SppV1.Packet, deliveries: MutableList<Pair<Int, ByteArray>>) {
+        val channel = when (packet.channel) {
+            SppV1.CHANNEL_PROTO_RX, SppV1.CHANNEL_PROTO_TX -> SppV2.CHANNEL_PROTOBUF
+            SppV1.CHANNEL_MASS -> SppV2.CHANNEL_DATA
+            else -> {
+                log.debug("V1: pacote ignorado no canal ${packet.channel} (${packet.payload.size} bytes)")
+                return
+            }
+        }
+        var body = packet.payload
+        if (packet.dataType == SppV1.DATA_TYPE_ENCRYPTED) {
+            val c = v1Cipher
+            if (c == null) {
+                log.warn("V1: pacote cifrado antes da autenticação (serial ${packet.serial})")
+                return
+            }
+            body = try {
+                c.decrypt(body)
+            } catch (e: CcmTagException) {
+                log.warn("V1: pacote descartado, ${e.message} (serial ${packet.serial})")
+                return
+            }
+        }
+        log.debug("RX V1 canal=${packet.channel} serial=${packet.serial} dataType=${packet.dataType}")
+        deliveries += channel to body
     }
 
     private fun handleFrameLocked(frame: SppV2.Frame, deliveries: MutableList<Pair<Int, ByteArray>>) {
@@ -292,7 +385,7 @@ class XiaomiLink(
             }
             SppV2.TYPE_DATA -> {
                 // Todo quadro DATA da banda recebe ACK, como no Gadgetbridge.
-                writeQueue.trySend(SppV2.ack(frame.seq))
+                writeQueue.trySend(Outgoing(SppV2.ack(frame.seq)))
                 if (frame.payload.size < 2) {
                     log.warn("Quadro DATA curto demais (seq=${frame.seq})")
                     return
@@ -354,7 +447,7 @@ class XiaomiLink(
 
     private fun resendLocked(reason: String) {
         log.warn("Reenviando ${outstanding.size} quadro(s) a partir do ${outstanding.firstOrNull()?.seq} ($reason)")
-        for (item in outstanding) writeQueue.trySend(item.frame)
+        for (item in outstanding) writeQueue.trySend(Outgoing(item.frame))
         armTimeoutLocked(force = true)
     }
 
@@ -403,6 +496,11 @@ class XiaomiLink(
         }
         outstanding.clear()
         timeoutJob?.cancel()
+        // V1: quem esperava a escrita de um pacote ainda na fila também precisa saber da queda.
+        while (true) {
+            val item = writeQueue.tryReceive().getOrNull() ?: break
+            item.written?.completeExceptionally(error)
+        }
         writeQueue.close()
         val l = listener
         // Fecha o transporte e avisa fora da thread atual (que pode ser a do próprio transporte).

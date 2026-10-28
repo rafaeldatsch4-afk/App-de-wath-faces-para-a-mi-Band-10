@@ -7,8 +7,8 @@ import io.github.rafaeldatsch4afk.mibandfaces.proto.Command
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.LinkConfig
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.LinkException
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.SppV2
-import io.github.rafaeldatsch4afk.mibandfaces.protocol.SppV2Cipher
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.XiaomiCrypto
+import io.github.rafaeldatsch4afk.mibandfaces.protocol.BandLink
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.XiaomiLink
 import io.github.rafaeldatsch4afk.mibandfaces.util.toHexPreview
 import kotlinx.coroutines.CompletableDeferred
@@ -78,8 +78,8 @@ class BandClient(
      */
     private val reconnectDelaysMs: List<Long> = listOf(1_000, 3_000, 6_000),
 ) {
-    /** O que é preciso para reconectar sozinho: como criar um transporte novo e a chave. */
-    private class Session(val newTransport: () -> BandTransport, val authKey: ByteArray)
+    /** O que é preciso para reconectar sozinho: como criar um enlace novo e a chave. */
+    private class Session(val newLink: () -> BandLink, val authKey: ByteArray)
 
     private class Waiter(val match: (Command) -> Boolean, val reply: CompletableDeferred<Command>)
 
@@ -90,7 +90,7 @@ class BandClient(
     val info: StateFlow<BandInfo> = _info.asStateFlow()
 
     @Volatile
-    private var link: XiaomiLink? = null
+    private var link: BandLink? = null
     private val waiters = CopyOnWriteArrayList<Waiter>()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -123,12 +123,16 @@ class BandClient(
      * conexão cair sem o usuário pedir, o cliente cria outro transporte com [newTransport] e
      * reconecta sozinho, até [disconnect] ser chamado.
      */
-    suspend fun connect(newTransport: () -> BandTransport, authKey: ByteArray, autoReconnect: Boolean) {
+    suspend fun connect(newTransport: () -> BandTransport, authKey: ByteArray, autoReconnect: Boolean) =
+        connectLink({ XiaomiLink(newTransport(), log, linkConfig) }, authKey, autoReconnect)
+
+    /** Como [connect], mas com um enlace pronto (ex.: BLE V1 da Mi Band 8, que não é um "cano" de bytes). */
+    suspend fun connectLink(newLink: () -> BandLink, authKey: ByteArray, autoReconnect: Boolean) {
         require(authKey.size == 16) { "a auth key deve ter 16 bytes" }
         disconnect()
-        session = if (autoReconnect) Session(newTransport, authKey.copyOf()) else null
+        session = if (autoReconnect) Session(newLink, authKey.copyOf()) else null
         try {
-            establish(newTransport(), authKey, announceFailure = true)
+            establish(newLink(), authKey, announceFailure = true)
         } catch (e: Exception) {
             session = null
             throw e
@@ -150,11 +154,10 @@ class BandClient(
         return state is BandState.Ready
     }
 
-    private suspend fun establish(transport: BandTransport, authKey: ByteArray, announceFailure: Boolean) {
-        val newLink = XiaomiLink(transport, log, linkConfig)
+    private suspend fun establish(newLink: BandLink, authKey: ByteArray, announceFailure: Boolean) {
         link = newLink
         try {
-            _state.value = BandState.Connecting("Abrindo ${transport.description}…")
+            _state.value = BandState.Connecting("Abrindo ${newLink.description}…")
             newLink.open(LinkListener(newLink))
             _state.value = BandState.Connecting("Autenticando…")
             authenticate(newLink, authKey)
@@ -163,8 +166,8 @@ class BandClient(
             syncTime()
             if (link !== newLink || !newLink.isOpen) throw NotConnectedException()
             connectionGeneration++
-            _state.value = BandState.Ready(transport.description)
-            log.info("Pronto: autenticado por ${transport.description}")
+            _state.value = BandState.Ready(newLink.description)
+            log.info("Pronto: autenticado por ${newLink.description}")
             startKeepAlive(newLink)
         } catch (e: Exception) {
             keepAliveJob?.cancel()
@@ -192,7 +195,7 @@ class BandClient(
     }
 
     /** Mantém a conexão viva enquanto ela for a atual: pede a bateria se ficar parada. */
-    private fun startKeepAlive(owner: XiaomiLink) {
+    private fun startKeepAlive(owner: BandLink) {
         keepAliveJob?.cancel()
         if (keepAliveIdleMs <= 0) return
         keepAliveJob = scope.launch {
@@ -224,7 +227,7 @@ class BandClient(
                 if (session !== s) return@launch
                 log.info("Reconexão automática: tentativa $attempt de ${reconnectDelaysMs.size}")
                 try {
-                    establish(s.newTransport(), s.authKey, announceFailure = false)
+                    establish(s.newLink(), s.authKey, announceFailure = false)
                     log.info("Reconectado")
                     return@launch
                 } catch (e: CancellationException) {
@@ -242,7 +245,7 @@ class BandClient(
         }
     }
 
-    private suspend fun authenticate(l: XiaomiLink, authKey: ByteArray) {
+    private suspend fun authenticate(l: BandLink, authKey: ByteArray) {
         val phoneNonce = ByteArray(16).also { SecureRandom().nextBytes(it) }
         val step1 = request(XiaomiAuth.buildNonceCommand(phoneNonce), "autenticação (passo 1)", l) {
             it.isA(XiaomiAuth.COMMAND_TYPE, XiaomiAuth.CMD_NONCE)
@@ -266,7 +269,7 @@ class BandClient(
         if (step2.auth.hasErrorCode() && step2.auth.errorCode != 0) {
             throw AuthException("A banda recusou a confirmação (código ${step2.auth.errorCode}): ${XiaomiAuth.describeAccountError(step2.auth.errorCode)}")
         }
-        l.cipher = SppV2Cipher(keys)
+        l.onAuthenticated(keys)
     }
 
     /**
@@ -326,7 +329,7 @@ class BandClient(
     private suspend fun request(
         command: Command,
         what: String,
-        l: XiaomiLink,
+        l: BandLink,
         timeoutMs: Long = requestTimeoutMs,
         match: (Command) -> Boolean,
     ): Command {
@@ -350,9 +353,9 @@ class BandClient(
 
     internal val linkWindow: Int get() = link?.effectiveWindow ?: 1
 
-    private fun currentLink(): XiaomiLink = link ?: throw NotConnectedException()
+    private fun currentLink(): BandLink = link ?: throw NotConnectedException()
 
-    private suspend fun sendOn(l: XiaomiLink, command: Command) {
+    private suspend fun sendOn(l: BandLink, command: Command) {
         // Autenticação (tipo 1) vai em texto puro; o resto vai cifrado depois da autenticação.
         val encrypt = command.type != XiaomiAuth.COMMAND_TYPE
         val bytes = command.toByteArray()
@@ -397,7 +400,7 @@ class BandClient(
     }
 
     /** Um listener por enlace, para que o fechamento de um enlace antigo não afete o atual. */
-    private inner class LinkListener(private val owner: XiaomiLink) : XiaomiLink.Listener {
+    private inner class LinkListener(private val owner: BandLink) : BandLink.Listener {
         override fun onPacket(channel: Int, body: ByteArray) {
             if (link === owner) this@BandClient.onPacket(channel, body)
         }

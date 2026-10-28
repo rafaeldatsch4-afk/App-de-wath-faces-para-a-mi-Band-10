@@ -1,8 +1,10 @@
 package io.github.rafaeldatsch4afk.mibandfaces.protocol
 
+import io.github.rafaeldatsch4afk.mibandfaces.bluetooth.BandTransport
 import io.github.rafaeldatsch4afk.mibandfaces.log.PacketLog
 import io.github.rafaeldatsch4afk.mibandfaces.testutil.FakeBandTransport
 import io.github.rafaeldatsch4afk.mibandfaces.util.hexToBytes
+import io.github.rafaeldatsch4afk.mibandfaces.util.toHex
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -22,7 +24,7 @@ class XiaomiLinkTest {
         sessionTimeoutMs = 500,
     )
 
-    private class Collector : XiaomiLink.Listener {
+    private class Collector : BandLink.Listener {
         val packets = CopyOnWriteArrayList<Pair<Int, ByteArray>>()
         val closed = CompletableDeferred<Throwable?>()
         override fun onPacket(channel: Int, body: ByteArray) {
@@ -55,27 +57,37 @@ class XiaomiLinkTest {
     }
 
     @Test
-    fun refusesSppV1Band() = runBlocking {
+    fun staysInSppV1WhenBandAnswersVersion1() = runBlocking {
         val band = FakeBandTransport(versionPayload = "01".hexToBytes())
         val link = XiaomiLink(band, PacketLog(), fastConfig)
-        try {
-            link.open(Collector())
-            fail("deveria recusar SPP V1")
-        } catch (e: LinkException) {
-            assertTrue(e.message!!.contains("SPP V1"))
-        }
+        link.open(Collector())
+        assertTrue(link.isV1)
+        assertTrue(link.description.contains("SPP V1"))
+        // Sem configuração de sessão V2 nem janela.
+        assertEquals(1, link.effectiveWindow)
+        link.close()
     }
 
     @Test
-    fun versionProbeTimesOut() = runBlocking {
+    fun silentVersionProbeMeansSppV1() = runBlocking {
+        // XiaomiSppSupport: sem resposta à sondagem, a banda fala V1.
         val band = FakeBandTransport(versionPayload = null)
         val link = XiaomiLink(band, PacketLog(), fastConfig)
-        try {
-            link.open(Collector())
-            fail("deveria expirar")
-        } catch (e: LinkException) {
-            assertTrue(e.message!!.contains("não respondeu"))
-        }
+        link.open(Collector())
+        assertTrue(link.isV1)
+        link.close()
+    }
+
+    @Test
+    fun sppV1FramesFollowGadgetbridgeLayout() = runBlocking {
+        val band = FakeBandTransport(versionPayload = "01".hexToBytes())
+        val sent = mutableListOf<ByteArray>()
+        val link = XiaomiLink(RecordingTransport(band, sent), PacketLog(), fastConfig)
+        link.open(Collector())
+        // Comando de autenticação: texto puro, dataType 2, canal 2, serial 0.
+        link.send(SppV2.CHANNEL_PROTOBUF, byteArrayOf(0x08, 0x01), encrypt = false)
+        assertEquals("badcfe0280050002000208 01ef".replace(" ", ""), sent.last().toHex())
+        link.close()
     }
 
     @Test
@@ -173,6 +185,14 @@ class XiaomiLinkTest {
             fail("deveria falhar com a desconexão")
         } catch (e: LinkClosedException) {
             assertTrue(e.message!!.contains("caiu"))
+        }
+    }
+
+    /** Repassa tudo para [inner] e guarda o que o celular escreveu. */
+    private class RecordingTransport(private val inner: BandTransport, private val sent: MutableList<ByteArray>) : BandTransport by inner {
+        override suspend fun write(bytes: ByteArray) {
+            sent += bytes.copyOf()
+            inner.write(bytes)
         }
     }
 }

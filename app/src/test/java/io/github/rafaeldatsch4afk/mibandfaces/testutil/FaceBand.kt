@@ -22,7 +22,7 @@ import java.util.zip.CRC32
  * Banda simulada com watch faces e mini-apps: lista, ativa, remove e recebe o envio em partes, conferindo o
  * MD5, o tamanho e o CRC32 do payload (formato de XiaomiDataUploadService).
  */
-class FaceBand(authKey: ByteArray) : FakeBand(authKey) {
+class FaceBand(authKey: ByteArray, transport: FakeBandTransport = FakeBandTransport()) : FakeBand(authKey, transport) {
     data class Face(val id: String, val name: String, var active: Boolean, val canDelete: Boolean)
 
     val faces = CopyOnWriteArrayList(

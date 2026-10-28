@@ -1,13 +1,15 @@
 package io.github.rafaeldatsch4afk.mibandfaces.protocol
 
 /**
- * Enquadramento SPP V1 (XiaomiSppPacketV1 no Gadgetbridge). Este app só usa o V1 para a
- * "sondagem de versão" logo após abrir o socket RFCOMM: se a banda responder com
- * `payload[0] >= 2`, a sessão continua em SPP V2. A Mi Band 10 responde `03 00 41`.
+ * Enquadramento SPP V1 (XiaomiSppPacketV1 / XiaomiSppProtocolV1 no Gadgetbridge). Serve para a
+ * "sondagem de versão" logo após abrir o socket RFCOMM e, se a banda não falar V2 (firmwares mais
+ * antigos da Mi Band 9), para a sessão inteira. A Mi Band 10 responde `03 00 41` e segue em V2.
  *
  * ```
  * ba dc fe | canal(1) | flags(1) | tamanho(2 LE = payload + 3) | opcode | serial | dataType | payload | ef
  * ```
+ *
+ * No V1 não há ACK nem reenvio: cada pacote vai uma vez, como no Gadgetbridge.
  */
 object SppV1 {
     private val PREAMBLE = byteArrayOf(0xba.toByte(), 0xdc.toByte(), 0xfe.toByte())
@@ -15,24 +17,57 @@ object SppV1 {
     private const val HEADER_SIZE = 10 // preâmbulo(3) + canal + flags + tamanho(2) + opcode + serial + dataType
 
     const val CHANNEL_VERSION = 0
+
+    /** Protobuf vindo da banda. */
+    const val CHANNEL_PROTO_RX = 1
+
+    /** Protobuf indo para a banda. */
+    const val CHANNEL_PROTO_TX = 2
+    const val CHANNEL_FITNESS = 3
+
+    /** Envio de arquivos ("mass"). */
+    const val CHANNEL_MASS = 5
+
+    const val DATA_TYPE_PLAIN = 0
+    const val DATA_TYPE_ENCRYPTED = 1
+    const val DATA_TYPE_AUTH = 2
+
     private const val FLAG = 0x80
     private const val NEEDS_RESPONSE = 0x40
     private const val OPCODE_READ = 0
-    private const val DATA_TYPE_PLAIN = 0
+    const val OPCODE_SEND = 2
 
     /** Pedido de versão: `badcfe 00 c0 0300 00 00 00 ef`. */
-    fun versionRequest(): ByteArray = byteArrayOf(
-        *PREAMBLE,
-        CHANNEL_VERSION.toByte(),
-        (FLAG or NEEDS_RESPONSE).toByte(),
-        3, 0, // tamanho = payload vazio + 3
-        OPCODE_READ.toByte(),
-        0, // serial do quadro
-        DATA_TYPE_PLAIN.toByte(),
-        EPILOGUE,
-    )
+    fun versionRequest(): ByteArray = encode(CHANNEL_VERSION, FLAG or NEEDS_RESPONSE, OPCODE_READ, 0, DATA_TYPE_PLAIN, ByteArray(0))
 
-    data class Packet(val channel: Int, val payload: ByteArray)
+    /** Monta um pacote. [payload] já vem cifrado, se for o caso. */
+    fun encode(channel: Int, flags: Int, opcode: Int, serial: Int, dataType: Int, payload: ByteArray): ByteArray {
+        val length = payload.size + 3
+        require(length <= 0xffff) { "pacote SPP V1 grande demais" }
+        return byteArrayOf(
+            *PREAMBLE,
+            (channel and 0x0f).toByte(),
+            flags.toByte(),
+            length.toByte(),
+            (length ushr 8).toByte(),
+            opcode.toByte(),
+            serial.toByte(),
+            dataType.toByte(),
+        ) + payload + EPILOGUE
+    }
+
+    /** Pacote de dados enviado pelo celular (flag 0x80, opcode SEND), como o Gadgetbridge. */
+    fun send(channel: Int, serial: Int, dataType: Int, payload: ByteArray): ByteArray =
+        encode(channel, FLAG, OPCODE_SEND, serial, dataType, payload)
+
+    class Packet(
+        val channel: Int,
+        val payload: ByteArray,
+        val flags: Int = 0,
+        val opcode: Int = 0,
+        val serial: Int = 0,
+        val dataType: Int = DATA_TYPE_PLAIN,
+    )
 
     sealed interface ParseResult {
         /** Faltam bytes para completar o pacote. */
@@ -41,7 +76,7 @@ object SppV1 {
         /** Lixo no início do buffer: descartar [skip] bytes e tentar de novo. */
         data class Invalid(val skip: Int) : ParseResult
 
-        data class Complete(val packet: Packet, val size: Int) : ParseResult
+        class Complete(val packet: Packet, val size: Int) : ParseResult
     }
 
     fun parse(buffer: ByteArray): ParseResult {
@@ -55,9 +90,15 @@ object SppV1 {
         if (buffer.size < packetSize) return ParseResult.Incomplete
         if (buffer[packetSize - 1] != EPILOGUE) return ParseResult.Invalid(nextPreamble(buffer))
 
-        val channel = buffer[3].toInt() and 0x0f
-        val payload = buffer.copyOfRange(HEADER_SIZE, packetSize - 1)
-        return ParseResult.Complete(Packet(channel, payload), packetSize)
+        val packet = Packet(
+            channel = buffer[3].toInt() and 0x0f,
+            payload = buffer.copyOfRange(HEADER_SIZE, packetSize - 1),
+            flags = buffer[4].toInt() and 0xff,
+            opcode = buffer[7].toInt() and 0xff,
+            serial = buffer[8].toInt() and 0xff,
+            dataType = buffer[9].toInt() and 0xff,
+        )
+        return ParseResult.Complete(packet, packetSize)
     }
 
     private fun nextPreamble(buffer: ByteArray): Int {

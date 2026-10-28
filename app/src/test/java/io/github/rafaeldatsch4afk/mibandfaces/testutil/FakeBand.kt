@@ -9,6 +9,7 @@ import io.github.rafaeldatsch4afk.mibandfaces.proto.CompanionDevice
 import io.github.rafaeldatsch4afk.mibandfaces.proto.DeviceInfo
 import io.github.rafaeldatsch4afk.mibandfaces.proto.Power
 import io.github.rafaeldatsch4afk.mibandfaces.proto.System
+import io.github.rafaeldatsch4afk.mibandfaces.protocol.SppV1
 import io.github.rafaeldatsch4afk.mibandfaces.protocol.SppV2
 import org.bouncycastle.crypto.engines.AESEngine
 import org.bouncycastle.crypto.modes.CCMBlockCipher
@@ -97,8 +98,31 @@ open class FakeBand(
         val okm = out.toByteArray()
         hostDecKey = okm.copyOfRange(0, 16)
         hostEncKey = okm.copyOfRange(16, 32)
+        hostDecNonce = okm.copyOfRange(32, 36)
         hostEncNonce = okm.copyOfRange(36, 40)
+        lastV1Counter = 0
     }
+
+    private var hostDecNonce = ByteArray(0)
+
+    /** Último contador de nonce visto num comando V1 cifrado (precisa crescer). */
+    private var lastV1Counter = 0
+
+    private fun ccmEncrypt(key: ByteArray, nonce: ByteArray, data: ByteArray): ByteArray {
+        @Suppress("DEPRECATION")
+        val cipher = CCMBlockCipher(AESEngine())
+        cipher.init(true, AEADParameters(KeyParameter(key), 32, nonce, null))
+        val out = ByteArray(cipher.getOutputSize(data.size))
+        val n = cipher.processBytes(data, 0, data.size, out, 0)
+        cipher.doFinal(out, n)
+        return out
+    }
+
+    private fun v1Nonce(base: ByteArray, counter: Int) =
+        base + ByteArray(4) + java.nio.ByteBuffer.allocate(4).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(counter).array()
+
+    /** Protocolo "V1" (SPP V1 ou BLE V1): AES-CCM no lugar do AES-CTR do V2. */
+    protected open val usesV1Crypto: Boolean get() = transport.isV1
 
     private fun ccmDecrypt(key: ByteArray, nonce: ByteArray, data: ByteArray): ByteArray {
         @Suppress("DEPRECATION")
@@ -113,14 +137,65 @@ open class FakeBand(
     /** Envia um comando da banda para o celular (cifrado se já autenticado). */
     fun reply(command: Command) {
         val bytes = command.toByteArray()
-        if (authenticated && command.type != 1) {
+        val encrypt = authenticated && command.type != 1
+        if (usesV1Crypto) {
+            // XiaomiAuthService.decrypt (lado do celular) usa sempre o contador 0.
+            if (encrypt) sendToHostV1(SppV2.CHANNEL_PROTOBUF, true, ccmEncrypt(hostDecKey, v1Nonce(hostDecNonce, 0), bytes))
+            else sendToHostV1(SppV2.CHANNEL_PROTOBUF, false, bytes)
+        } else if (encrypt) {
             transport.sendToHost(SppV2.CHANNEL_PROTOBUF, SppV2.OPCODE_ENCRYPTED, ctr(hostDecKey, bytes))
         } else {
             transport.sendToHost(SppV2.CHANNEL_PROTOBUF, SppV2.OPCODE_PLAIN, bytes)
         }
     }
 
+    /** Envia um pacote V1 (o canal e o "cifrado" são traduzidos por cada transporte). */
+    protected open fun sendToHostV1(channel: Int, encrypted: Boolean, body: ByteArray) {
+        transport.sendToHost(channel, if (encrypted) SppV1.DATA_TYPE_ENCRYPTED else SppV1.DATA_TYPE_PLAIN, body)
+    }
+
+    /**
+     * Pacote V1 recebido: comandos cifrados levam o contador (u16 LE) na frente; o canal de arquivos
+     * vai cifrado com o contador 0 (XiaomiSppPacketV1.encode / XiaomiCharacteristicV1).
+     */
+    protected fun onV1Data(channel: Int, encrypted: Boolean, body: ByteArray, counterPrefixed: Boolean = true) {
+        if (!encrypted) {
+            check(channel == SppV2.CHANNEL_PROTOBUF) { "arquivo sem cifra no V1" }
+            val command = Command.parseFrom(body)
+            check(command.type == 1) { "comando ${command.type} sem cifra" }
+            commandsReceived += command
+            handleCommand(command)
+            return
+        }
+        check(authenticated) { "pacote cifrado antes da autenticação" }
+        when (channel) {
+            SppV2.CHANNEL_PROTOBUF -> {
+                val counter: Int
+                val ct: ByteArray
+                if (counterPrefixed) {
+                    counter = (body[0].toInt() and 0xff) or ((body[1].toInt() and 0xff) shl 8)
+                    ct = body.copyOfRange(2, body.size)
+                } else {
+                    error("comando cifrado sem contador")
+                }
+                check(counter > lastV1Counter) { "contador do nonce não cresceu ($counter depois de $lastV1Counter)" }
+                lastV1Counter = counter
+                val command = Command.parseFrom(ccmDecrypt(hostEncKey, v1Nonce(hostEncNonce, counter), ct))
+                commandsReceived += command
+                handleCommand(command)
+            }
+            SppV2.CHANNEL_DATA -> onDataChannel(ccmDecrypt(hostEncKey, v1Nonce(hostEncNonce, 0), body))
+        }
+    }
+
     private fun onData(channel: Int, opcode: Int, body: ByteArray) {
+        if (usesV1Crypto) {
+            // SPP V1: opcode = dataType; comandos de autenticação vêm com dataType 2.
+            check(opcode != SppV1.DATA_TYPE_ENCRYPTED || channel == SppV2.CHANNEL_DATA || authenticated) { "cifrado antes da autenticação" }
+            if (opcode == SppV1.DATA_TYPE_AUTH) check(channel == SppV2.CHANNEL_PROTOBUF)
+            onV1Data(channel, opcode == SppV1.DATA_TYPE_ENCRYPTED, body)
+            return
+        }
         when (channel) {
             SppV2.CHANNEL_PROTOBUF -> {
                 val plain = if (opcode == SppV2.OPCODE_ENCRYPTED) {

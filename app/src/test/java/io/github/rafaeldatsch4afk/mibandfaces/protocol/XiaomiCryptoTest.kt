@@ -62,6 +62,25 @@ class XiaomiCryptoTest {
     }
 
     @Test
+    fun ccmDecryptRoundTripsAndRejectsBadTag() {
+        val key = ByteArray(16) { (it * 7).toByte() }
+        val nonce = XiaomiCrypto.ccmPacketNonce(byteArrayOf(9, 8, 7, 6), 0)
+        for (size in listOf(0, 1, 16, 33, 300)) {
+            val plain = ByteArray(size) { (it * 13).toByte() }
+            val sealed = bouncyCcm(key, nonce, plain)
+            assertArrayEquals(plain, XiaomiCrypto.aesCcmDecrypt(key, nonce, sealed))
+        }
+        val sealed = bouncyCcm(key, nonce, byteArrayOf(1, 2, 3))
+        sealed[sealed.size - 1] = (sealed[sealed.size - 1].toInt() xor 1).toByte()
+        try {
+            XiaomiCrypto.aesCcmDecrypt(key, nonce, sealed)
+            org.junit.Assert.fail("tag errada deveria falhar")
+        } catch (e: CcmTagException) {
+            // esperado
+        }
+    }
+
+    @Test
     fun ccmMatchesBouncyCastleWithLongerTag() {
         val random = Random(8)
         val key = random.nextBytes(16)

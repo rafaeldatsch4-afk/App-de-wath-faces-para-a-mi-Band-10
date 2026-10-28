@@ -13,6 +13,9 @@ import java.util.concurrent.TimeUnit
  * sessão SPP V2, confirma (ACK) os quadros DATA em ordem e envia NACK quando falta um quadro
  * (go-back-N), como descrito no Gadgetbridge (XiaomiSppPacketV2 / XiaomiSppProtocolV2).
  *
+ * Se a versão respondida for < 2 (ou não houver resposta), a banda fica em SPP V1: sem ACK, e
+ * [onData] recebe o dataType do pacote no lugar do opcode.
+ *
  * As camadas de cima (autenticação, comandos) são simuladas por [onData].
  */
 class FakeBandTransport(
@@ -45,6 +48,12 @@ class FakeBandTransport(
     private val executor = Executors.newSingleThreadExecutor()
     private var listener: BandTransport.Listener? = null
     private var v2 = !needsVersionProbe
+
+    /** A banda ficou em SPP V1 depois da sondagem. */
+    @Volatile
+    var isV1 = false
+        private set
+    private var v1Buffer = ByteArray(0)
     private val parser = SppV2.Parser()
     private var expectedSeq = 0
     private var bandSeq = 0
@@ -68,12 +77,20 @@ class FakeBandTransport(
         executor.shutdown()
     }
 
-    /** Envia um pacote DATA da banda para o celular. */
+    /**
+     * Envia um pacote da banda para o celular. Em V2, [opcode] é o opcode (1 puro, 2 cifrado); em
+     * V1, é o dataType (0 puro, 1 cifrado, 2 autenticação) e o canal é o lógico (1 comandos).
+     */
     fun sendToHost(channel: Int, opcode: Int, body: ByteArray) {
         executor.execute {
             val seq = bandSeq
             bandSeq = (bandSeq + 1) and 0xff
-            deliver(SppV2.encode(SppV2.TYPE_DATA, seq, SppV2.dataPayload(channel, opcode, body)))
+            if (isV1) {
+                val raw = if (channel == SppV2.CHANNEL_PROTOBUF) SppV1.CHANNEL_PROTO_RX else SppV1.CHANNEL_MASS
+                deliver(SppV1.encode(raw, 0x80, SppV1.OPCODE_SEND, seq, opcode, body))
+            } else {
+                deliver(SppV2.encode(SppV2.TYPE_DATA, seq, SppV2.dataPayload(channel, opcode, body)))
+            }
         }
     }
 
@@ -101,10 +118,16 @@ class FakeBandTransport(
 
     private fun process(bytes: ByteArray) {
         if (silent) return
+        if (isV1) {
+            processV1(bytes)
+            return
+        }
         if (!v2) {
             if (bytes.contentEquals(SppV1.versionRequest())) {
-                v2 = true
-                val payload = versionPayload ?: return // sem resposta: sondagem expira
+                val payload = versionPayload
+                // Versão < 2 ou sem resposta: a banda fica em V1 (XiaomiSppSupport).
+                if (payload == null || payload.isEmpty() || (payload[0].toInt() and 0xff) < 2) isV1 = true else v2 = true
+                payload ?: return // sem resposta: sondagem expira
                 val length = payload.size + 3
                 deliver(
                     byteArrayOf(0xba.toByte(), 0xdc.toByte(), 0xfe.toByte(), 0, 0, length.toByte(), (length ushr 8).toByte(), 0, 0, 0) +
@@ -114,6 +137,29 @@ class FakeBandTransport(
             return
         }
         for (frame in parser.feed(bytes)) handleFrame(frame)
+    }
+
+    /** Pacotes SPP V1: canal 2 = comandos, 5 = arquivos. Não há ACK no V1. */
+    private fun processV1(bytes: ByteArray) {
+        v1Buffer += bytes
+        while (true) {
+            when (val r = SppV1.parse(v1Buffer)) {
+                SppV1.ParseResult.Incomplete -> return
+                is SppV1.ParseResult.Invalid -> error("pacote SPP V1 inválido do celular")
+                is SppV1.ParseResult.Complete -> {
+                    v1Buffer = v1Buffer.copyOfRange(r.size, v1Buffer.size)
+                    val p = r.packet
+                    check(p.opcode == SppV1.OPCODE_SEND && p.flags == 0x80) { "cabeçalho V1 diferente do Gadgetbridge" }
+                    acceptedSeqs += p.serial
+                    val channel = when (p.channel) {
+                        SppV1.CHANNEL_PROTO_TX -> SppV2.CHANNEL_PROTOBUF
+                        SppV1.CHANNEL_MASS -> SppV2.CHANNEL_DATA
+                        else -> error("canal V1 ${p.channel} inesperado")
+                    }
+                    onData(channel, p.dataType, p.payload)
+                }
+            }
+        }
     }
 
     private fun handleFrame(frame: SppV2.Frame) {
