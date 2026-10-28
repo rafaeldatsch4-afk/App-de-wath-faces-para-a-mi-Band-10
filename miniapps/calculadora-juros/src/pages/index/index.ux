@@ -1,0 +1,325 @@
+<template>
+  <div class="page">
+    <!-- Passos 1 a 3: valor, parcelas e taxa, com teclado numérico -->
+    <div class="campo" if="{{passo < 3}}">
+      <text class="passo">{{passo + 1}} de 4</text>
+      <text class="titulo">{{titulo}}</text>
+      <text class="digitado {{tamanho}}">{{mostrado}}</text>
+      <text class="erro">{{erro}}</text>
+    </div>
+    <div class="teclado" if="{{passo < 3}}">
+      <div class="linha" for="{{linha in teclas}}">
+        <div class="tecla {{t.cls}}" for="{{t in linha}}" onclick="tocar(t.k)">
+          <text class="rotulo">{{t.t}}</text>
+        </div>
+      </div>
+      <div class="linha">
+        <div class="tecla nav {{passo === 0 ? 'apagada' : ''}}" onclick="voltar">
+          <text class="rotuloPequeno">Voltar</text>
+        </div>
+        <div class="tecla ok" onclick="avancar">
+          <text class="rotuloPequeno">Próximo</text>
+        </div>
+      </div>
+    </div>
+
+    <!-- Passo 4: tipo de juros -->
+    <div class="escolha" if="{{passo === 3}}">
+      <text class="passo">4 de 4</text>
+      <text class="titulo">Tipo de juros</text>
+      <text class="resumo">{{resumo}}</text>
+      <div class="opcao" onclick="escolher('simples')">
+        <text class="rotulo">Simples</text>
+      </div>
+      <div class="opcao composto" onclick="escolher('composto')">
+        <text class="rotulo">Compostos</text>
+      </div>
+      <div class="opcao nav" onclick="voltar">
+        <text class="rotuloPequeno">Voltar</text>
+      </div>
+    </div>
+
+    <!-- Resultado -->
+    <div class="resultado" if="{{passo === 4}}">
+      <text class="titulo">Juros {{tipo === 'simples' ? 'simples' : 'compostos'}}</text>
+      <text class="resumo">{{resumo}}</text>
+      <text class="legenda">Total a pagar</text>
+      <text class="total {{tamanhoTotal}}">{{total}}</text>
+      <text class="legenda">Juros</text>
+      <text class="linhaValor">{{juros}}</text>
+      <text class="legenda">Parcelas</text>
+      <text class="linhaValor">{{parcela}}</text>
+      <div class="botoes">
+        <div class="opcao nav metade" onclick="trocarTipo">
+          <text class="rotuloPequeno">Trocar tipo</text>
+        </div>
+        <div class="opcao ok metade" onclick="novaConta">
+          <text class="rotuloPequeno">Nova conta</text>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import { CAMPOS, calcular, digitar, mostrarDigitado, paraNumero, porcento, reais, validar } from '../../common/juros.js'
+
+function k(t, key, cls) {
+  return { t: t, k: key, cls: cls }
+}
+
+var TECLAS_DECIMAIS = [
+  [k('1', '1', 'num'), k('2', '2', 'num'), k('3', '3', 'num')],
+  [k('4', '4', 'num'), k('5', '5', 'num'), k('6', '6', 'num')],
+  [k('7', '7', 'num'), k('8', '8', 'num'), k('9', '9', 'num')],
+  [k(',', ',', 'fn'), k('0', '0', 'num'), k('⌫', 'DEL', 'fn')]
+]
+
+// Parcelas não têm vírgula: a tecla fica apagada.
+var TECLAS_INTEIRAS = [
+  TECLAS_DECIMAIS[0],
+  TECLAS_DECIMAIS[1],
+  TECLAS_DECIMAIS[2],
+  [k('', '', 'apagada'), k('0', '0', 'num'), k('⌫', 'DEL', 'fn')]
+]
+
+export default {
+  private: {
+    passo: 0,
+    textos: ['', '', ''],
+    titulo: CAMPOS[0].titulo,
+    mostrado: 'R$ 0',
+    tamanho: 'grande',
+    erro: '',
+    teclas: TECLAS_DECIMAIS,
+    tipo: 'composto',
+    resumo: '',
+    total: '',
+    tamanhoTotal: 'grande',
+    juros: '',
+    parcela: ''
+  },
+
+  numeros() {
+    return {
+      valor: paraNumero(this.textos[0]),
+      parcelas: paraNumero(this.textos[1]),
+      taxa: paraNumero(this.textos[2])
+    }
+  },
+
+  atualizar() {
+    var p = this.passo
+    if (p < 3) {
+      var campo = CAMPOS[p]
+      var texto = mostrarDigitado(this.textos[p])
+      if (campo.id === 'valor') texto = 'R$ ' + texto
+      if (campo.id === 'parcelas') texto = texto + 'x'
+      if (campo.id === 'taxa') texto = texto + '%'
+      this.titulo = campo.titulo
+      this.mostrado = texto
+      this.tamanho = texto.length <= 8 ? 'grande' : texto.length <= 12 ? 'medio' : 'pequeno'
+      this.teclas = campo.decimais === 0 ? TECLAS_INTEIRAS : TECLAS_DECIMAIS
+    }
+    var n = this.numeros()
+    if (p >= 3) this.resumo = reais(n.valor) + ' · ' + n.parcelas + 'x · ' + porcento(n.taxa) + ' a.m.'
+  },
+
+  tocar(tecla) {
+    if (tecla === '') return
+    var p = this.passo
+    // Cópia da lista para a tela perceber a mudança.
+    var textos = this.textos.slice()
+    textos[p] = digitar(textos[p], tecla, CAMPOS[p])
+    this.textos = textos
+    this.erro = ''
+    this.atualizar()
+  },
+
+  avancar() {
+    var p = this.passo
+    var erro = validar(CAMPOS[p].id, paraNumero(this.textos[p]))
+    if (erro) {
+      this.erro = erro
+      return
+    }
+    this.erro = ''
+    this.passo = p + 1
+    this.atualizar()
+  },
+
+  voltar() {
+    if (this.passo === 0) return
+    this.erro = ''
+    this.passo = this.passo === 4 ? 3 : this.passo - 1
+    this.atualizar()
+  },
+
+  escolher(tipo) {
+    var n = this.numeros()
+    var r = calcular(n.valor, n.parcelas, n.taxa, tipo)
+    this.tipo = tipo
+    this.total = reais(r.montante)
+    this.tamanhoTotal = this.total.length <= 12 ? 'grande' : this.total.length <= 16 ? 'medio' : 'pequeno'
+    this.juros = reais(r.juros)
+    this.parcela = n.parcelas + 'x de ' + reais(r.parcela)
+    this.passo = 4
+    this.atualizar()
+  },
+
+  trocarTipo() {
+    this.passo = 3
+    this.atualizar()
+  },
+
+  novaConta() {
+    this.textos = ['', '', '']
+    this.erro = ''
+    this.passo = 0
+    this.atualizar()
+  }
+}
+</script>
+
+<style>
+.page {
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  background-color: #000000;
+  padding: 30px 8px 20px 8px;
+}
+
+.campo {
+  flex-direction: column;
+  align-items: center;
+  height: 150px;
+}
+
+.passo {
+  font-size: 16px;
+  color: #8a8a8e;
+  text-align: center;
+}
+
+.titulo {
+  font-size: 22px;
+  color: #ff9f0a;
+  text-align: center;
+  margin-top: 4px;
+}
+
+.digitado {
+  height: 56px;
+  color: #ffffff;
+  text-align: center;
+  margin-top: 6px;
+}
+
+.grande { font-size: 38px; }
+.medio { font-size: 28px; }
+.pequeno { font-size: 20px; }
+
+.erro {
+  height: 24px;
+  font-size: 15px;
+  color: #ff453a;
+  text-align: center;
+}
+
+.teclado {
+  flex: 1;
+  flex-direction: column;
+}
+
+.linha {
+  flex: 1;
+  flex-direction: row;
+}
+
+.tecla {
+  flex: 1;
+  margin: 3px;
+  border-radius: 20px;
+  justify-content: center;
+  align-items: center;
+  background-color: #2c2c2e;
+}
+
+.fn { background-color: #5a5a5e; }
+.nav { background-color: #3a3a3c; }
+.ok { background-color: #30d158; }
+.apagada { background-color: #000000; }
+
+.rotulo {
+  font-size: 28px;
+  color: #ffffff;
+  text-align: center;
+}
+
+.rotuloPequeno {
+  font-size: 18px;
+  color: #ffffff;
+  text-align: center;
+}
+
+.escolha {
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+}
+
+.resultado {
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+}
+
+.resumo {
+  font-size: 15px;
+  color: #c7c7cc;
+  text-align: center;
+  margin: 8px 0 14px 0;
+}
+
+.opcao {
+  width: 100%;
+  height: 72px;
+  margin: 5px 0;
+  border-radius: 24px;
+  justify-content: center;
+  align-items: center;
+  background-color: #ff9f0a;
+}
+
+.composto { background-color: #0a84ff; }
+
+.legenda {
+  font-size: 15px;
+  color: #8a8a8e;
+  margin-top: 10px;
+}
+
+.total {
+  color: #30d158;
+  text-align: center;
+}
+
+.linhaValor {
+  font-size: 22px;
+  color: #ffffff;
+  text-align: center;
+}
+
+.botoes {
+  flex-direction: row;
+  width: 100%;
+  margin-top: 18px;
+}
+
+.metade {
+  flex: 1;
+  width: 0;
+  margin: 0 3px;
+}
+</style>
