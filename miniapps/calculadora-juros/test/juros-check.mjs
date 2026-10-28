@@ -1,6 +1,6 @@
 // Conferência da lógica da calculadora (node puro, sem dependências): npm test
 import assert from 'node:assert/strict';
-import { CAMPOS, calcular, digitar, mostrarDigitado, paraNumero, porcento, reais, validar } from '../src/common/juros.js';
+import { CAMPOS, calcular, digitar, mostrarCampo, mostrarDigitado, mostrarRascunho, paraNumero, porcento, reais, validar } from '../src/common/juros.js';
 
 const [valor, parcelas, taxa] = CAMPOS;
 const digita = (campo, teclas) => teclas.split('').reduce((t, k) => digitar(t, k === '<' ? 'DEL' : k, campo), '');
@@ -55,5 +55,18 @@ assert.equal(reais(0.005), 'R$ 0,01');
 assert.equal(reais(calcular(999999999, 600, 100, 'composto').montante), 'grande demais');
 assert.equal(porcento(2.5), '2,5%');
 assert.equal(porcento(2), '2%');
+
+// Textos das barras e do teclado
+assert.equal(mostrarCampo('valor', 1500), 'R$ 1.500,00');
+assert.equal(mostrarCampo('parcelas', 12), '12x');
+assert.equal(mostrarCampo('taxa', 2.5), '2,5%');
+assert.equal(mostrarRascunho('valor', '1500,5'), 'R$ 1.500,5');
+assert.equal(mostrarRascunho('parcelas', ''), '0x');
+
+// Exemplo das imagens: R$ 1.500,00 em 12x a 2,5% ao mês, compostos
+r = calcular(1500, 12, 2.5, 'composto');
+assert.equal(reais(r.montante), 'R$ 2.017,33');
+assert.equal(reais(r.juros), 'R$ 517,33');
+assert.equal(reais(r.parcela), 'R$ 168,11');
 
 console.log('juros: todas as conferências passaram');

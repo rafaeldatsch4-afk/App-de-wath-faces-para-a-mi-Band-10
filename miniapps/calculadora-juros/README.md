@@ -6,13 +6,16 @@ não roda mini-apps.
 
 ## Como usar na banda
 
-1. **Valor inicial** (R$): digite no teclado e toque em *Próximo*.
-2. **Parcelas** (meses): só números inteiros, de 1 a 600.
-3. **Juros ao mês** (%): aceita vírgula, de 0 a 100.
-4. **Tipo de juros**: *Simples* ou *Compostos*.
+A tela principal tem quatro barras, de cima para baixo:
 
-O resultado mostra o total a pagar, quanto disso é juros e o valor de cada parcela. *Trocar tipo*
-refaz a conta com o outro tipo; *Nova conta* começa de novo.
+1. **Valor** (R$): toque para abrir o teclado, digite e toque em *OK*.
+2. **Parcelas (vezes)**: de 1 a 600, sem vírgula.
+3. **Tipo de juros**: toque em *Simples* ou *Composto* (o escolhido fica laranja).
+4. **Taxa de juros ao mês** (%): aceita vírgula, de 0 a 100.
+
+Com tudo preenchido, o botão **Calcular** fica verde. O resultado mostra o total a pagar, quanto
+disso é juros e o valor de cada parcela. *Voltar* mantém os números (para trocar o tipo, por
+exemplo); *Nova* limpa tudo.
 
 ## As contas
 
@@ -34,7 +37,7 @@ composto dividido pelas parcelas. Este app não faz a Tabela Price.
 ```
 src/manifest.json          pacote io.github.rafaeldatsch4afk.juros, sem permissões especiais
 src/app.ux
-src/pages/index/index.ux   telas: três campos com teclado, tipo de juros e resultado
+src/pages/index/index.ux   telas: principal (barras), teclado e resultado
 src/common/juros.js        lógica pura (digitação, validação, contas, formatação em reais)
 src/common/logo.png        ícone
 test/juros-check.mjs       conferência da lógica com node

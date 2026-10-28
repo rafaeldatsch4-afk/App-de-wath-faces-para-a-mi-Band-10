@@ -4,11 +4,11 @@
 // Juros compostos: montante = valor × (1 + taxa) ^ parcelas
 // Em ambos: juros = montante − valor e parcela = montante ÷ parcelas (parcelas iguais).
 
-// Campos digitados, na ordem das telas. "inteiros" limita os dígitos antes da vírgula.
+// Campos digitados no teclado. "inteiros" limita os dígitos antes da vírgula.
 export var CAMPOS = [
-  { id: 'valor', titulo: 'Valor inicial', decimais: 2, inteiros: 9 },
-  { id: 'parcelas', titulo: 'Parcelas (meses)', decimais: 0, inteiros: 3 },
-  { id: 'taxa', titulo: 'Juros ao mês (%)', decimais: 2, inteiros: 3 }
+  { id: 'valor', titulo: 'Valor', dica: 'em reais', decimais: 2, inteiros: 9 },
+  { id: 'parcelas', titulo: 'Parcelas (vezes)', dica: 'de 1 a 600', decimais: 0, inteiros: 3 },
+  { id: 'taxa', titulo: 'Taxa de juros ao mês', dica: 'em %, ex.: 2,5', decimais: 2, inteiros: 3 }
 ];
 
 export var MAX_PARCELAS = 600;
@@ -92,4 +92,19 @@ export function mostrarDigitado(texto) {
 // Taxa para exibir: 2.5 → "2,5%".
 export function porcento(taxa) {
   return String(Math.round(taxa * 100) / 100).replace('.', ',') + '%';
+}
+
+// Valor já confirmado, para mostrar na barra da tela principal.
+export function mostrarCampo(campoId, numero) {
+  if (campoId === 'valor') return reais(numero);
+  if (campoId === 'parcelas') return numero + 'x';
+  return porcento(numero);
+}
+
+// Texto enquanto digita, com a unidade do campo.
+export function mostrarRascunho(campoId, texto) {
+  var t = mostrarDigitado(texto);
+  if (campoId === 'valor') return 'R$ ' + t;
+  if (campoId === 'parcelas') return t + 'x';
+  return t + '%';
 }
