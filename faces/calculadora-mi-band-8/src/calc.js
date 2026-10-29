@@ -448,7 +448,7 @@ function sair() {
 
 function criarTela() {
   var i;
-  for (i = 0; i < FUNDO_PARTES; i++) create_img(0, 'fundo.bin', 0, i * FUNDO_A);
+  for (i = 0; i < FUNDO_PARTES; i++) create_img(0, 'fundo' + i + '.bin', 0, i * FUNDO_A);
   var imgSair = create_img(0, 'sair.bin', SAIR_X, SAIR_Y);
   addEvent(imgSair, [7], sair);
 

@@ -31,6 +31,8 @@ import sys
 
 from PIL import Image, ImageDraw, ImageFont
 
+import vidro
+
 AQUI = os.path.dirname(os.path.abspath(__file__))
 TIPO_APP = 0x05
 TIPO_IMAGEM = 0x02
@@ -170,11 +172,19 @@ def ler_lvgl_bin(dados):
 RLE = bytes((0xE0, 0x21, 0xA5, 0x5A))
 
 
-def rle_bgra(im):
-    """Compressão das imagens da face (tipo 4, BGRA), do jeito das faces oficiais: repetição só para
-    5 ou mais pixels iguais, trechos de até 127 e nenhum trecho literal de 1 pixel."""
+def pixels(im, tipo):
+    """Pixels de uma imagem como bytes: tipo 4 = BGRA, tipo 2 = RGB565 (little-endian, sem alfa)."""
     rgba = im.convert('RGBA').tobytes()
-    px = [bytes((rgba[i + 2], rgba[i + 1], rgba[i], rgba[i + 3])) for i in range(0, len(rgba), 4)]
+    if tipo == 4:
+        return [bytes((rgba[i + 2], rgba[i + 1], rgba[i], rgba[i + 3])) for i in range(0, len(rgba), 4)]
+    return [struct.pack('<H', (rgba[i] >> 3) << 11 | (rgba[i + 1] >> 2) << 5 | rgba[i + 2] >> 3)
+            for i in range(0, len(rgba), 4)]
+
+
+def rle(im, tipo=4):
+    """Compressão das imagens da face (tipo 4 BGRA ou 2 RGB565), do jeito das faces oficiais:
+    repetição só para 5 ou mais pixels iguais, trechos de até 127 e nenhum literal de 1 pixel."""
+    px = pixels(im, tipo)
     # Grupos: ['R', pixels iguais] (5 ou mais) ou ['L', pixels].
     grupos = []
     i = 0
@@ -192,8 +202,8 @@ def rle_bgra(im):
     # Um literal de 1 pixel pega um pixel de uma repetição vizinha (ou a absorve, se ela tiver só 5).
     k = 0
     while k < len(grupos):
-        tipo, pix = grupos[k]
-        if tipo == 'L' and len(pix) == 1:
+        grupo, pix = grupos[k]
+        if grupo == 'L' and len(pix) == 1:
             prox = grupos[k + 1] if k + 1 < len(grupos) else None
             ant = grupos[k - 1] if k > 0 else None
             if prox and len(prox[1]) >= 6:
@@ -213,14 +223,14 @@ def rle_bgra(im):
                 raise ValueError('imagem de 1 pixel')
             continue
         k += 1
-    out = bytearray(RLE + struct.pack('<I', len(px) * 4 << 4 | 4))
-    for tipo, pix in grupos:
-        minimo = 5 if tipo == 'R' else 2
+    out = bytearray(RLE + struct.pack('<I', len(px) * len(px[0]) << 4 | tipo))
+    for grupo, pix in grupos:
+        minimo = 5 if grupo == 'R' else 2
         while pix:
             n = min(127, len(pix))
             if 0 < len(pix) - n < minimo:
                 n = len(pix) - minimo
-            if tipo == 'R':
+            if grupo == 'R':
                 out += bytes((n,)) + pix[0]
             else:
                 out += bytes((0x80 | n,)) + b''.join(pix[:n])
@@ -228,12 +238,11 @@ def rle_bgra(im):
     return bytes(out)
 
 
-def ler_imagem_face(dados):
-    """Imagem da face: 12 bytes de cabeçalho (…, largura, altura, tamanho) e RLE tipo 4."""
-    w, h = struct.unpack_from('<HH', dados, 4)
-    p = dados[12:12 + u32(dados, 8)]
-    if p[:4] != RLE or u32(p, 4) & 15 != 4:
+def descomprimir(p, w, h):
+    """RLE de uma imagem da face → imagem RGBA."""
+    if p[:4] != RLE or u32(p, 4) & 15 not in (2, 4):
         raise ValueError('imagem da face sem a compressão conhecida')
+    ps = u32(p, 4) & 15
     out = bytearray()
     o = 8
     while o < len(p):
@@ -241,22 +250,69 @@ def ler_imagem_face(dados):
         o += 1
         n = c & 0x7F
         if c & 0x80:
-            out += p[o:o + 4 * n]
-            o += 4 * n
+            out += p[o:o + ps * n]
+            o += ps * n
         else:
-            out += p[o:o + 4] * n
-            o += 4
-    if len(out) != w * h * 4:
+            out += p[o:o + ps] * n
+            o += ps
+    if len(out) != w * h * ps or u32(p, 4) >> 4 != len(out):
         raise ValueError('imagem da face com tamanho errado')
     im = Image.new('RGBA', (w, h))
-    im.putdata([(out[i + 2], out[i + 1], out[i], out[i + 3]) for i in range(0, len(out), 4)])
+    if ps == 4:
+        im.putdata([(out[i + 2], out[i + 1], out[i], out[i + 3]) for i in range(0, len(out), 4)])
+    else:
+        cores = []
+        for i in range(0, len(out), 2):
+            v = out[i] | out[i + 1] << 8
+            cores.append(((v >> 11) * 255 // 31, ((v >> 5) & 63) * 255 // 63, (v & 31) * 255 // 31, 255))
+        im.putdata(cores)
     return im
 
 
+def tipo_rle(dados_imagem):
+    return u32(dados_imagem, 16) & 15
+
+
+def ler_imagem_face(dados):
+    """Imagem da face: 12 bytes de cabeçalho (…, largura, altura, tamanho) e RLE."""
+    w, h = struct.unpack_from('<HH', dados, 4)
+    return descomprimir(dados[12:12 + u32(dados, 8)], w, h)
+
+
 def imagem_face(im, cabecalho_original):
-    dados = rle_bgra(im)
+    """Nova imagem no lugar de outra: mesmo cabeçalho e mesmo tipo de cor da original."""
+    dados = rle(im, tipo_rle(cabecalho_original))
     w, h = im.size
     return bytes(cabecalho_original[:4]) + struct.pack('<HHI', w, h, len(dados)) + dados
+
+
+def ler_lista(dados):
+    """Lista de imagens (dígitos, dias da semana): byte 1 = quadros, largura/altura em +4/+6,
+    tamanhos dos quadros em +12 e os quadros comprimidos em seguida."""
+    n = dados[1]
+    w, h = struct.unpack_from('<HH', dados, 4)
+    quadros = []
+    p = 12 + 4 * n
+    for k in range(n):
+        tam = u32(dados, 12 + 4 * k)
+        quadros.append(descomprimir(dados[p:p + tam], w, h))
+        p += tam
+    if p != len(dados):
+        raise ValueError('lista de imagens com sobra')
+    return quadros
+
+
+def lista_face(quadros, original):
+    """Nova lista com os mesmos cabeçalho, quantidade, tamanho e tipo de cor da original."""
+    n = original[1]
+    w, h = struct.unpack_from('<HH', original, 4)
+    if len(quadros) != n or any(q.size != (w, h) for q in quadros):
+        raise ValueError('lista nova com quadros diferentes da original')
+    tipo = u32(original, 12 + 4 * n + 4) & 15
+    dados = [rle(q, tipo) for q in quadros]
+    cab = bytearray(original[:12])
+    struct.pack_into('<I', cab, 8, sum(len(d) for d in dados))
+    return bytes(cab) + b''.join(struct.pack('<I', len(d)) for d in dados) + b''.join(dados)
 
 
 def fonte(tam):
@@ -297,8 +353,10 @@ ROTULOS = {'c': 'C', 'r': '√', 'p': '%', 'd': '÷', 'x': '×', 's': '−', 'a'
 SIMBOLOS = {'v': ',', 'm': '-', 'e': 'e', 'a': '+', 's': '−', 'x': '×', 'd': '÷'}
 
 
-def imagens_do_app(c):
+def imagens_do_app(c, estilo):
     """Todas as imagens do app: {nome: bytes .bin}."""
+    if estilo == 'vidro':
+        return imagens_do_app_vidro(c)
     arq = {}
 
     fundo = Image.new('RGB', (192, c['FUNDO_A']), CREME)
@@ -307,7 +365,8 @@ def imagens_do_app(c):
         d.line((x, 0, x, c['FUNDO_A']), fill=GRADE)
     for y in range(0, c['FUNDO_A'], 14):
         d.line((0, y, 192, y), fill=GRADE)
-    arq['fundo.bin'] = lvgl_bin(fundo, False)
+    for i in range(c['FUNDO_PARTES']):
+        arq[f'fundo{i}.bin'] = lvgl_bin(fundo, False)
 
     l, a = c['TECLA_L'], c['TECLA_A']
     for k in c['TECLAS']:
@@ -346,15 +405,192 @@ def imagens_do_app(c):
     return arq
 
 
-def botao_calc(l, a):
+def posicao_tecla(c, i):
+    x = c['TECLA_X0'] + (i % 4) * c['TECLA_PASSO_X']
+    y = c['TECLA_Y0'] + (i // 4) * c['TECLA_PASSO_Y']
+    return x, y, x + c['TECLA_L'], y + c['TECLA_A']
+
+
+def imagens_do_app_vidro(c):
+    """Calculadora de vidro: o corpo fosco das teclas e do visor fica assado no fundo; as imagens
+    das teclas têm só a borda clara e o rótulo."""
+    arq = {}
+    l, a = c['TECLA_L'], c['TECLA_A']
+    fundo = vidro.papel_de_parede()
+    fundo = vidro.painel(fundo, (8, 38, 184, 100), 20)
+    fundo = vidro.painel(fundo, (c['SAIR_X'], c['SAIR_Y'], c['SAIR_X'] + 56, c['SAIR_Y'] + 26), 13, forca=0.25)
+    for i, k in enumerate(c['TECLAS']):
+        if k in 'dxsa':
+            tinta, forca = vidro.LARANJA, 0.55
+        elif k == 'i':
+            tinta, forca = vidro.VERDE, 0.55
+        else:
+            tinta, forca = (255, 255, 255), 0.32 if k in 'crpb' else 0.16
+        fundo = vidro.painel(fundo, posicao_tecla(c, i), 14, tinta, forca)
+    fundo = vidro.pontilhar_565(fundo)
+    for i in range(c['FUNDO_PARTES']):
+        arq[f'fundo{i}.bin'] = lvgl_bin(fundo.crop((0, i * c['FUNDO_A'], 192, (i + 1) * c['FUNDO_A'])), False)
+
+    for k in c['TECLAS']:
+        im = vidro.borda((l, a), 14, 210, 60, 1.2)
+        tam = {'b': 19, 'v': 30}.get(k, 23)
+        im.alpha_composite(vidro.texto((l, a), ROTULOS.get(k, k), tam, dy=-5 if k == 'v' else 0))
+        arq[f'k_{k}.bin'] = lvgl_bin(im, True)
+    destaque = Image.new('RGBA', (l, a), (255, 255, 255, 0))
+    destaque.putalpha(vidro.mascara_arredondada((l, a), 14).point(lambda v: v * 85 // 255))
+    arq['destaque.bin'] = lvgl_bin(destaque, True)
+
+    for prefixo, w, h, tam, alfa in (('g_', c['VISOR_L'], c['VISOR_A'], 20, 255),
+                                      ('s_', c['LINHA_L'], c['LINHA_A'], 11, 190)):
+        for s in [str(i) for i in range(10)] + list('vme') + (list('asxd') if prefixo == 's_' else []):
+            im = vidro.texto((w, h), SIMBOLOS.get(s, s), tam if s != 'e' else tam - 4, alfa=alfa,
+                             tabular=s.isdigit(), dy=round(h * 0.28) if s == 'v' else 0,
+                             sombra=prefixo == 'g_')
+            arq[f'{prefixo}{s}.bin'] = lvgl_bin(im, True)
+
+    arq['erro.bin'] = lvgl_bin(vidro.texto((c['ERRO_L'], c['VISOR_A']), 'Erro', 20, cor=vidro.VERMELHO_CLARO), True)
+    im = vidro.borda((56, 26), 13, 220, 70, 1.2)
+    im.alpha_composite(vidro.texto((56, 26), 'sair', 14))
+    arq['sair.bin'] = lvgl_bin(im, True)
+    return arq
+
+
+def botao_calc(l, a, estilo):
+    if estilo == 'vidro':
+        return vidro.botao_vidro((l, a), 'CALC', round(a / 2))
     im = pilula(l, a, AMARELO, MARROM, a // 2, larg=max(1, round(a / 20)))
     texto_centro(ImageDraw.Draw(im), (0, 0, l, a), 'CALC', round(a / 2), MARROM)
     return im
 
 
+# ---------------------------------------------------------------- face de vidro
+
+# Layout da tela normal da face 谁是学霸, conferido antes de redesenhar: (quadros, largura, altura)
+# de cada lista e (largura, altura) de cada imagem.
+LISTAS_BASE = {0: (10, 20, 28), 1: (10, 20, 28), 2: (10, 20, 28), 3: (7, 70, 28), 4: (10, 18, 26),
+               5: (10, 20, 28), 6: (10, 20, 28), 7: (10, 48, 82), 8: (10, 48, 82), 9: (10, 48, 82),
+               10: (10, 48, 82)}
+IMAGENS_BASE = {0: (192, 490), 1: (30, 82), 2: (20, 28), 3: (30, 30), 4: (24, 26), 5: (120, 60)}
+DIAS_AOD = (7, 40, 20)  # lista 3 da tela AOD: dias da semana em chinês na base
+DIAS = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB']  # a lista começa no domingo (SUN na base)
+
+
+def forma(item, lista):
+    d = item['dados']
+    if lista:
+        return (d[1],) + struct.unpack_from('<HH', d, 4)
+    return struct.unpack_from('<HH', d, 4)
+
+
+def vestir_vidro(face, botao_xy):
+    """Redesenha fundo, ícones, algarismos e dias da semana no estilo vidro, nos mesmos tamanhos.
+    Devolve as chaves (tela, seção, item) que mudaram."""
+    t0, t1 = face.telas[0]['secoes'], face.telas[1]['secoes']
+    if {i: forma(x, True) for i, x in enumerate(t0[3])} != LISTAS_BASE or \
+            {i: forma(x, False) for i, x in enumerate(t0[2])} != IMAGENS_BASE or \
+            len(t1[3]) < 4 or forma(t1[3][3], True) != DIAS_AOD:
+        raise SystemExit('O layout da base não é o da face 谁是学霸 que este estilo conhece; use --estilo creme.')
+    bx, by = botao_xy
+    bl, ba = IMAGENS_BASE[5]
+
+    fundo = vidro.papel_de_parede()
+    fundo = vidro.painel(fundo, (44, 13, 156, 49), 18)        # bateria
+    fundo = vidro.painel(fundo, (6, 146, 186, 188), 21)       # data
+    fundo = vidro.painel(fundo, (8, 216, 184, 380), 26)       # batimentos, calorias, passos
+    fundo = vidro.painel(fundo, (bx, by, bx + bl, by + ba), ba // 2, forca=0.24)  # botão CALC
+    fundo = fundo.convert('RGBA')
+    for icone, y in ((vidro.coracao, 230), (vidro.chama, 283), (vidro.passos, 334)):
+        fundo.alpha_composite(icone((28, 28)), (28, y))
+    linhas = ImageDraw.Draw(fundo)
+    for y in (269, 321):
+        linhas.line((26, y, 166, y), fill=(255, 255, 255, 60))
+    fundo = vidro.pontilhar_565(fundo.convert('RGB'))
+
+    novas = {
+        0: fundo,
+        1: vidro.ponto_duplo((30, 82)),
+        2: vidro.texto((20, 28), '/', 22),
+        3: vidro.raio_icone((30, 30)),
+        4: vidro.texto((24, 26), '%', 17),
+    }
+    mudou = set()
+    for i, im in novas.items():
+        t0[2][i]['dados'] = imagem_face(im, t0[2][i]['dados'])
+        t0[2][i]['tam'] = len(t0[2][i]['dados'])
+        mudou.add((0, 2, i))
+    for i, (n, w, h) in LISTAS_BASE.items():
+        if i == 3:
+            quadros = [vidro.texto((w, h), d, 19) for d in DIAS]
+        elif h == 82:
+            quadros = [vidro.algarismo_grande((w, h), str(k)) for k in range(10)]
+        else:
+            quadros = [vidro.texto((w, h), str(k), h - 2, tabular=True) for k in range(10)]
+        t0[3][i]['dados'] = lista_face(quadros, t0[3][i]['dados'])
+        t0[3][i]['tam'] = len(t0[3][i]['dados'])
+        mudou.add((0, 3, i))
+    n, w, h = DIAS_AOD
+    t1[3][3]['dados'] = lista_face([vidro.texto((w, h), d, 13, cor=(225, 225, 225), sombra=False) for d in DIAS],
+                                   t1[3][3]['dados'])
+    t1[3][3]['tam'] = len(t1[3][3]['dados'])
+    mudou.add((1, 3, 3))
+
+    # Data no jeito brasileiro (dia/mês): troca as posições dos widgets do mês e do dia.
+    pos = {}
+    for n, e in enumerate(t0[0]):
+        alvo = u32(e['dados'], 0)
+        if alvo >> 24 == 7:
+            w = t0[7][alvo & 0xFFFFFF]['dados']
+            pos[(w[0], w[1])] = n
+    mes, dia = pos.get((0x10, 0x12)), pos.get((0x18, 0x12))
+    if mes is not None and dia is not None:
+        a, b = bytearray(t0[0][mes]['dados']), bytearray(t0[0][dia]['dados'])
+        a[4:8], b[4:8] = b[4:8], a[4:8]
+        t0[0][mes]['dados'], t0[0][dia]['dados'] = bytes(a), bytes(b)
+        mudou |= {(0, 0, mes), (0, 0, dia)}
+    return mudou
+
+
+# Valores de exemplo da prévia, pela fonte de dados do widget (bytes 0 e 1): 09:41, qui 29/10.
+VALORES_PREVIA = {(0x0A, 0x11): '0', (0x09, 0x11): '9', (0x12, 0x11): '4', (0x11, 0x11): '1',
+                  (0x10, 0x12): '10', (0x18, 0x12): '29', (0x20, 0x12): 4, (0x08, 0x41): '85',
+                  (0x08, 0x22): '78', (0x08, 0x23): '102', (0x08, 0x21): '2560'}
+
+
+def desenhar_face(face):
+    """Desenha a tela normal com valores de exemplo, a partir dos elementos da própria face."""
+    sec = face.telas[0]['secoes']
+    tela = Image.new('RGBA', (192, 490), (0, 0, 0, 255))
+    for e in sec[0]:
+        d = e['dados']
+        alvo = u32(d, 0)
+        x, y = struct.unpack_from('<HH', d, 4)
+        tipo, i = alvo >> 24, alvo & 0xFFFFFF
+        if tipo == TIPO_IMAGEM:
+            tela.alpha_composite(ler_imagem_face(sec[2][i]['dados']), (x, y))
+        elif tipo == 9:
+            img = u32(sec[9][i]['dados'], 0x20) if len(sec[9][i]['dados']) >= 0x24 else 0
+            if img >> 24 == TIPO_IMAGEM:
+                tela.alpha_composite(ler_imagem_face(sec[2][img & 0xFFFFFF]['dados']), (x, y))
+        elif tipo == 7:
+            w = sec[7][i]['dados']
+            valor = VALORES_PREVIA.get((w[0], w[1]))
+            if valor is None:
+                continue
+            quadros = ler_lista(sec[3][u32(w, 8) & 0xFFFFFF]['dados'])
+            if isinstance(valor, int):
+                tela.alpha_composite(quadros[valor], (x, y))
+                continue
+            for k, ch in enumerate(valor):
+                tela.alpha_composite(quadros[int(ch)], (x + k * quadros[0].width, y))
+            if len(w) >= 20 and u32(w, 16) >> 24 == TIPO_IMAGEM:
+                tela.alpha_composite(ler_imagem_face(sec[2][u32(w, 16) & 0xFFFFFF]['dados']),
+                                     (x + len(valor) * quadros[0].width, y))
+    return tela
+
+
 # ---------------------------------------------------------------- montagem
 
-def montar(base, saida):
+def montar(base, saida, estilo='vidro'):
     dados = open(base, 'rb').read()
     face = Face(dados)
     if face.montar() != dados:
@@ -378,7 +614,7 @@ def montar(base, saida):
     antes = ler_imagem_face(img_botao['dados'])
 
     fonte_js, c = constantes_js()
-    arquivos = imagens_do_app(c)
+    arquivos = imagens_do_app(c, estilo)
     nome_js = 'calc.js'
     novos = []
     for nome in sorted(arquivos) + [nome_js]:
@@ -404,49 +640,81 @@ def montar(base, saida):
     struct.pack_into('<I', d, 0x2C, TIPO_APP << 24 | (len(novos) - 1))
     acao['dados'] = bytes(d)
 
-    calc = botao_calc(*antes.size)
+    elem = next(i for i in tela['secoes'][0] if u32(i['dados'], 0) == u32(acao['id'], 0))
+    ex, ey = struct.unpack_from('<HH', elem['dados'], 4)
+    mudou = {(0, 2, n_img & 0xFFFFFF)}
+    if estilo == 'vidro':
+        mudou |= vestir_vidro(face, (ex, ey))
+
+    calc = botao_calc(*antes.size, estilo)
     img_botao['dados'] = imagem_face(calc, img_botao['dados'])
     img_botao['tam'] = len(img_botao['dados'])
 
-    # Prévia: o botão CALC desenhado sobre o PLAY, na escala da prévia.
     previa = ler_imagem_face(face.previa)
-    elem = next(i for i in tela['secoes'][0] if u32(i['dados'], 0) == u32(acao['id'], 0))
-    ex, ey = struct.unpack_from('<HH', elem['dados'], 4)
-    k = previa.width / 192
-    pequeno = botao_calc(round(calc.width * k), round(calc.height * k))
-    caixa = (round(ex * k), round(ey * k))
-    # Apaga o PLAY antigo com a cor do fundo logo acima dele e desenha o CALC.
-    cor_fundo = previa.getpixel((caixa[0] + pequeno.width // 2, max(0, caixa[1] - 3)))
-    previa.paste(Image.new('RGBA', pequeno.size, cor_fundo), caixa)
-    previa.alpha_composite(pequeno, caixa)
+    if estilo == 'vidro':
+        # Prévia desenhada com as imagens novas e valores de exemplo.
+        previa = desenhar_face(face).resize(previa.size, Image.LANCZOS)
+    else:
+        # O botão CALC desenhado sobre o PLAY, na escala da prévia.
+        k = previa.width / 192
+        pequeno = botao_calc(round(calc.width * k), round(calc.height * k), estilo)
+        caixa = (round(ex * k), round(ey * k))
+        # Apaga o PLAY antigo com a cor do fundo logo acima dele e desenha o CALC.
+        cor_fundo = previa.getpixel((caixa[0] + pequeno.width // 2, max(0, caixa[1] - 3)))
+        previa.paste(Image.new('RGBA', pequeno.size, cor_fundo), caixa)
+        previa.alpha_composite(pequeno, caixa)
     face.previa = imagem_face(previa, face.previa)
 
     face.cabecalho[0x28:0x68] = NOVO_ID.ljust(0x40, b'\0')
     face.cabecalho[0x68:0xA8] = NOVO_NOME.encode('utf-8').ljust(0x40, b'\0')
 
     resultado = face.montar(ordem)
-    conferir(resultado, dados, fonte_js, arquivos)
+    conferir(resultado, dados, fonte_js, arquivos, mudou)
     os.makedirs(os.path.dirname(os.path.abspath(saida)), exist_ok=True)
     open(saida, 'wb').write(resultado)
     return resultado, previa, calc, arquivos
 
 
-def conferir(novo, base, fonte_js, arquivos):
-    """Remonta o arquivo gerado e confere que só mudou o que devia."""
+def conferir(novo, base, fonte_js, arquivos, mudou):
+    """Remonta o arquivo gerado e confere que só mudou o que devia: os apps, a ação do botão e as
+    imagens/listas em `mudou`, estas com o mesmo cabeçalho, tamanho e tipo de cor da base."""
     f = Face(novo)
     b = Face(base)
     if f.montar() != novo:
         raise SystemExit('ERRO: a face gerada não se remonta igual.')
     if f.tamanho_original != len(novo) or len(f.telas) != 2:
         raise SystemExit('ERRO: estrutura da face gerada.')
-    # A tela AOD e todos os itens da tela normal, exceto apps, botão e sua imagem, ficam iguais.
-    for s in range(10):
-        for n, (x, y) in enumerate(zip(f.telas[1]['secoes'][s], b.telas[1]['secoes'][s])):
-            if x['dados'] != y['dados'] or x['tam'] != y['tam']:
-                raise SystemExit(f'ERRO: a tela AOD mudou (seção {s}, item {n}).')
-    for s in (0, 1, 3, 4, 6, 7, 8):
-        if [i['dados'] for i in f.telas[0]['secoes'][s]] != [i['dados'] for i in b.telas[0]['secoes'][s]]:
-            raise SystemExit(f'ERRO: a seção {s} da tela normal mudou.')
+    for t in range(2):
+        for s in range(10):
+            if s == 5 and t == 0:
+                continue
+            nova, velha = f.telas[t]['secoes'][s], b.telas[t]['secoes'][s]
+            if len(nova) != len(velha):
+                raise SystemExit(f'ERRO: a seção {s} da tela {t} mudou de tamanho.')
+            for n, (x, y) in enumerate(zip(nova, velha)):
+                if x['id'] != y['id']:
+                    raise SystemExit(f'ERRO: id do item {n} da seção {s} da tela {t}.')
+                if (t, s, n) in mudou:
+                    if s == 2:
+                        im = ler_imagem_face(x['dados'])
+                        ok = x['dados'][:8] == y['dados'][:8] and tipo_rle(x['dados']) == tipo_rle(y['dados'])
+                        ok = ok and im.size == ler_imagem_face(y['dados']).size and x['tam'] == len(x['dados'])
+                    elif s == 0:
+                        # Elemento: só a posição (x, y) pode mudar.
+                        ok = x['dados'][:4] == y['dados'][:4] and x['dados'][8:] == y['dados'][8:] and x['tam'] == y['tam']
+                    elif s == 3:
+                        q, r = ler_lista(x['dados']), ler_lista(y['dados'])
+                        ok = x['dados'][:8] == y['dados'][:8] and len(q) == len(r) and x['tam'] == len(x['dados'])
+                        ok = ok and u32(x['dados'], 12 + 4 * len(q) + 4) & 15 == u32(y['dados'], 12 + 4 * len(r) + 4) & 15
+                    else:
+                        ok = False
+                    if not ok:
+                        raise SystemExit(f'ERRO: item {n} da seção {s} da tela {t} mudou de forma.')
+                elif s == 9 and t == 0 and len(x['dados']) >= 0x30 and u32(x['dados'], 0x28) == ABRIR_APP:
+                    if x['dados'][:0x2C] != y['dados'][:0x2C]:
+                        raise SystemExit('ERRO: a ação do botão mudou além do app.')
+                elif x['dados'] != y['dados'] or x['tam'] != y['tam']:
+                    raise SystemExit(f'ERRO: o item {n} da seção {s} da tela {t} mudou.')
     apps = f.telas[0]['secoes'][5]
     nomes = []
     for n, item in enumerate(apps):
@@ -470,6 +738,7 @@ def conferir(novo, base, fonte_js, arquivos):
     usados |= {f'k_{k}.bin' for k in constantes_js()[1]['TECLAS']}
     usados |= {f'{p}{s}.bin' for p in ('g_', 's_') for s in [str(i) for i in range(10)] + list('vme')}
     usados |= {f's_{s}.bin' for s in 'asxd'}
+    usados |= {f'fundo{i}.bin' for i in range(constantes_js()[1]['FUNDO_PARTES'])}
     faltando = usados - set(nomes)
     if faltando:
         raise SystemExit(f'ERRO: o script usa imagens que não estão na face: {sorted(faltando)}')
@@ -535,8 +804,10 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--base', required=True, help='face 谁是学霸 (.bin) baixada para a sua Mi Band 8')
     p.add_argument('--saida', default=os.path.join(AQUI, 'dist', 'Calculadora-face.bin'))
+    p.add_argument('--estilo', choices=('vidro', 'creme'), default='vidro',
+                   help='vidro: face e calculadora redesenhadas em vidro líquido; creme: o visual da base')
     a = p.parse_args()
-    resultado, previa, calc, arquivos = montar(a.base, a.saida)
+    resultado, previa, calc, arquivos = montar(a.base, a.saida, a.estilo)
     previas(os.path.dirname(os.path.abspath(a.saida)), previa, calc, arquivos)
     print(f'{a.saida}: {len(resultado)} bytes ({len(resultado) // 1024} KB), {len(arquivos) + 1} arquivos no app')
 
