@@ -37,6 +37,8 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 - [x] **Mini-apps `.rpk`** (apps Vela/QuickApp, como uma calculadora): validação do pacote (ZIP inteiro com CRC de cada arquivo, `manifest.json`, página inicial, largura de tela), ícone, instalação com o mesmo envio em partes (tipo 64), lista dos apps instalados e remoção. Portado do `XiaomiRpkService` do Gadgetbridge. Testado na banda real
 - [x] Log detalhado dos pacotes TX/RX (copiar/compartilhar); a chave nunca aparece no log
 
+- [x] **Calculadora na Mi Band 8** em forma de watch face: a Mi Band 8 não aceita `.rpk`, mas as faces de jogo da Xiaomi trazem um app embutido aberto por um botão. [`faces/calculadora-mi-band-8`](faces/calculadora-mi-band-8/README.md) troca o jogo de uma dessas faces por uma calculadora (botão CALC). Ainda não testada numa banda real
+
 ### Futuro (ainda não feito)
 
 - Editor visual de watch face (fundo, relógio digital, data, bateria, passos, batimentos) exportando `.face`

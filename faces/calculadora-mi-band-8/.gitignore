@@ -1,0 +1,4 @@
+dist/
+# Faces da Xiaomi (a base e o resultado) não vão para o repositório.
+*.bin
+__pycache__/
