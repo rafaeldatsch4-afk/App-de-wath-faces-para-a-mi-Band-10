@@ -13,11 +13,14 @@ enum class BandModel(
     val knownPreviewSizes: List<Pair<Int, Int>>,
     /** Protocolo de conexão: a Mi Band 8 usa BLE "V1"; a 9 e a 10 usam Bluetooth Clássico (SPP). */
     val usesBleV1: Boolean,
-    /**
-     * Se a banda aceita mini-apps .rpk. A Mi Band 8 (firmware 2.3.14) não respondeu a nenhum
-     * comando de app no miband-hack.
-     */
+    /** Se a banda aceita mini-apps .rpk com certeza. */
     val supportsApps: Boolean,
+    /**
+     * Mini-apps só em modo experimental: a Mi Band 8 (firmware 2.3.14) não respondeu a nenhum
+     * comando de app no miband-hack, mas outro firmware pode responder. O app pergunta à banda
+     * (lista de apps, 20/0) antes, e o arquivo só é enviado se ela aceitar o pedido de instalação.
+     */
+    val appsExperimental: Boolean = false,
     /**
      * Se toda face precisa ter a tela normal e a AOD. Uma Mi Band 8 deixou de ligar depois de uma
      * face sem a AOD (miband-hack, 2026-10-26); as duas faces boas conhecidas tinham as duas.
@@ -32,6 +35,7 @@ enum class BandModel(
         knownPreviewSizes = listOf(122 to 310),
         usesBleV1 = true,
         supportsApps = false,
+        appsExperimental = true,
         requiresAodFace = true,
     ),
     BAND_9(
@@ -55,6 +59,9 @@ enum class BandModel(
     ;
 
     val screenText: String get() = "${screenWidth}×$screenHeight"
+
+    /** Se vale a pena tentar mini-apps (com certeza ou em modo experimental). */
+    val mayRunApps: Boolean get() = supportsApps || appsExperimental
 
     companion object {
         /** Padrões de nome do Gadgetbridge (getSupportedDeviceName). */

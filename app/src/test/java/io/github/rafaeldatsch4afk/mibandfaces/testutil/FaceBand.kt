@@ -60,6 +60,14 @@ class FaceBand(authKey: ByteArray, transport: FakeBandTransport = FakeBandTransp
     /** Status da resposta 20/1 (0 = aceito). */
     var rpkInstallStatus = 0
 
+    /** false = a banda ignora os comandos de mini-app, como a Mi Band 8 do miband-hack. */
+    @Volatile
+    var answersApps = true
+
+    /** false = responde à lista de apps, mas ignora o pedido de instalação. */
+    @Volatile
+    var answersAppInstall = true
+
     /** Tipo do último envio 22/0 (16 = face, 64 = mini-app). */
     @Volatile
     var uploadType = 0
@@ -71,6 +79,7 @@ class FaceBand(authKey: ByteArray, transport: FakeBandTransport = FakeBandTransp
     private val upload = ByteArrayOutputStream()
 
     override fun handleCommand(command: Command) {
+        if (command.type == 20 && (!answersApps || (command.subtype == 1 && !answersAppInstall))) return
         when {
             command.type == 4 && command.subtype == 0 -> sendList()
             command.type == 4 && command.subtype == 1 -> {

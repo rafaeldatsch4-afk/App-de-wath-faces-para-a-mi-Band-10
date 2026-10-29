@@ -45,6 +45,7 @@ fun FacesScreen(vm: MainViewModel) {
     val band by vm.client.state.collectAsStateWithLifecycle()
     val apps by vm.miniApps.apps.collectAsStateWithLifecycle()
     val model by vm.model.collectAsStateWithLifecycle()
+    val appsAnswered by vm.miniApps.answered.collectAsStateWithLifecycle()
     var toDelete by remember { mutableStateOf<InstalledFace?>(null) }
     var appToDelete by remember { mutableStateOf<InstalledApp?>(null) }
     val ready = band is BandState.Ready
@@ -101,7 +102,7 @@ fun FacesScreen(vm: MainViewModel) {
                     },
                 )
             }
-            if (ready && model.supportsApps) {
+            if (ready && model.mayRunApps) {
                 item {
                     Row(Modifier.fillMaxWidth().padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -112,11 +113,24 @@ fun FacesScreen(vm: MainViewModel) {
                         OutlinedButton(onClick = { vm.refreshApps() }) { Text("Atualizar") }
                     }
                 }
+                if (model.appsExperimental) {
+                    item {
+                        Text(
+                            when (appsAnswered) {
+                                true -> "Experimental: a ${model.label} respondeu à lista de apps, então os mini-apps podem funcionar."
+                                false -> "A ${model.label} não respondeu à lista de apps: este firmware provavelmente não aceita mini-apps."
+                                null -> "Experimental: perguntando à ${model.label} se ela aceita mini-apps…"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 if (apps?.isEmpty() == true) {
                     item { Text("Nenhum mini-app instalado.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
-            items(if (ready && model.supportsApps) apps.orEmpty() else emptyList(), key = { "app:" + it.id }) { app ->
+            items(if (ready && model.mayRunApps) apps.orEmpty() else emptyList(), key = { "app:" + it.id }) { app ->
                 ListItem(
                     colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
                     leadingContent = { Icon(Icons.Filled.Apps, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },

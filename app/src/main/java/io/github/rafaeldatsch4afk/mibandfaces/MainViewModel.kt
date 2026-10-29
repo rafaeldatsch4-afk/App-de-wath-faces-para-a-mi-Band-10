@@ -132,11 +132,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         runCatching { watchfaces.refresh() }.onFailure {
                             log.warn("Não consegui ler a lista de faces: ${it.message}")
                         }
-                        // A Mi Band 8 não responde aos comandos de app: pedir a lista só custaria um timeout.
-                        if (_model.value.supportsApps) {
+                        val model = _model.value
+                        if (model.supportsApps) {
                             runCatching { miniApps.refresh() }.onFailure {
                                 log.warn("Não consegui ler a lista de mini-apps: ${it.message}")
                             }
+                        } else if (model.appsExperimental) {
+                            // Mi Band 8: pergunta com um tempo curto se este firmware tem mini-apps.
+                            runCatching { miniApps.probe() }
+                                .onSuccess { log.info("A ${model.label} respondeu à lista de mini-apps: eles podem funcionar (experimental)") }
+                                .onFailure { log.warn("A ${model.label} não respondeu à lista de mini-apps: este firmware provavelmente não aceita mini-apps (${it.message})") }
                         }
                     }
                     is BandState.Disconnected, is BandState.Failed -> {

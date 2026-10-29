@@ -51,9 +51,13 @@ class BandModelTest {
     }
 
     @Test
-    fun band8DoesNotTakeMiniApps() {
-        val parsed = RpkFile.parse(RpkBuilder.build(), BandModel.BAND_8)
-        assertTrue((parsed as RpkFile.Rejected).reason.contains("Mi Band 8"))
+    fun band8MiniAppsAreExperimental() {
+        // 192 px, a tela da Mi Band 8: só sobra o aviso de experimental.
+        val parsed = RpkFile.parse(RpkBuilder.build(manifest = RpkBuilder.manifest(designWidth = 192)), BandModel.BAND_8) as RpkFile.Valid
+        assertEquals(1, parsed.warnings.size)
+        assertTrue(parsed.warnings[0].contains("Experimental na Mi Band 8"))
+        assertTrue(BandModel.BAND_8.mayRunApps)
+        assertTrue(!BandModel.BAND_8.supportsApps)
         val band9 = RpkFile.parse(RpkBuilder.build(manifest = RpkBuilder.manifest(designWidth = 192)), BandModel.BAND_9) as RpkFile.Valid
         assertEquals(emptyList<String>(), band9.warnings)
     }

@@ -8,7 +8,7 @@ App Android (Kotlin + Jetpack Compose, tema escuro) para instalar watch faces e 
 |---|---|---|---|
 | Mi Band 10 | 212 × 520 | Bluetooth Clássico (SPP V2) | sim |
 | Mi Band 9 | 192 × 490 | Bluetooth Clássico (SPP V2 ou V1, conforme o firmware) | sim |
-| Mi Band 8 | 192 × 490 | Bluetooth LE "V1" | não (a banda não aceita) |
+| Mi Band 8 | 192 × 490 | Bluetooth LE "V1" | experimental (o app pergunta à banda antes de enviar) |
 
 As versões Pro e Active não são suportadas (outra tela).
 
@@ -110,6 +110,7 @@ app/src/test/                  testes com uma banda simulada (transporte, autent
 Detalhes em [docs/PROTOCOLO.md](docs/PROTOCOLO.md#8-o-que-não-está-confirmado-no-código-de-referência). Resumo:
 
 - **BLE vs. Clássico:** o Gadgetbridge conecta as Mi Band 9 e 10 por Bluetooth Clássico (SPP) e a Mi Band 8 por BLE V1. O app faz o mesmo; o BLE V2 é alternativa experimental.
+- **Mini-apps na Mi Band 8:** no teste do miband-hack (firmware 2.3.14) ela não respondia a nenhum comando de app. O app pergunta a lista de apps (20/0) com um tempo curto ao conectar; na instalação, o arquivo só é enviado se a banda aceitar o pedido (20/1). Se ela ficar em silêncio, nada é enviado.
 - **Mi Band 8 e 9:** portadas do Gadgetbridge e do miband-hack, testadas só contra bandas simuladas. Na Mi Band 8, o envio de uma face é lento (cerca de 2 KB/s, segundo o miband-hack).
 - **Limite de 10 faces:** vem da especificação do app, não do Gadgetbridge nem do miband-hack.
 - **Tamanho das partes:** segue o Gadgetbridge (`chunkSize − 4`); o miband-hack desconta 2 bytes a mais no SPP.

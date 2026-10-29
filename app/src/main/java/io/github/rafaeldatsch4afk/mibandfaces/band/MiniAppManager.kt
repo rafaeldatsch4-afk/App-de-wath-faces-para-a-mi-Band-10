@@ -49,14 +49,38 @@ class MiniAppManager(
     /** Mini-apps instalados (null = ainda não lido). */
     val apps: StateFlow<List<InstalledApp>?> = _apps.asStateFlow()
 
+    private val _answered = MutableStateFlow<Boolean?>(null)
+
+    /**
+     * Se a banda respondeu ao pedido da lista de apps: true respondeu, false ficou em silêncio
+     * (firmware sem mini-apps, como a Mi Band 8 do miband-hack), null ainda não perguntado.
+     */
+    val answered: StateFlow<Boolean?> = _answered.asStateFlow()
+
     fun clear() {
         _apps.value = null
+        _answered.value = null
     }
 
-    suspend fun refresh(): List<InstalledApp> {
-        val reply = client.request(Commands.simple(Commands.RPK, Commands.RPK_LIST), "lista de mini-apps") {
-            it.isA(Commands.RPK, Commands.RPK_LIST)
+    /** Pergunta a lista com um tempo curto: para bandas em que os mini-apps são experimentais. */
+    suspend fun probe(): List<InstalledApp> = refresh(shortTimeoutMs)
+
+    suspend fun refresh(timeoutMs: Long? = null): List<InstalledApp> {
+        val reply = try {
+            if (timeoutMs != null) {
+                client.request(Commands.simple(Commands.RPK, Commands.RPK_LIST), "lista de mini-apps", timeoutMs) {
+                    it.isA(Commands.RPK, Commands.RPK_LIST)
+                }
+            } else {
+                client.request(Commands.simple(Commands.RPK, Commands.RPK_LIST), "lista de mini-apps") {
+                    it.isA(Commands.RPK, Commands.RPK_LIST)
+                }
+            }
+        } catch (e: BandTimeoutException) {
+            _answered.value = false
+            throw e
         }
+        _answered.value = true
         val list = reply.rpk.rpkList.rpkInfoList.map {
             InstalledApp(id = it.id, name = it.name.ifBlank { it.id }, sha = it.sha)
         }
@@ -90,8 +114,15 @@ class MiniAppManager(
     suspend fun install(file: RpkFile.Valid, replaceExisting: Boolean, onProgress: (InstallProgress) -> Unit) {
         if (!client.isReady) throw NotConnectedException()
 
-        onProgress(InstallProgress("Lendo os apps instalados…", null))
-        val existing = refresh().firstOrNull { it.id == file.packageName }
+        onProgress(InstallProgress("Perguntando à banda os apps instalados…", null))
+        val existing = try {
+            refresh().firstOrNull { it.id == file.packageName }
+        } catch (e: BandTimeoutException) {
+            throw InstallException(
+                "A banda não respondeu ao pedido da lista de mini-apps, então nada foi enviado. " +
+                    "A Mi Band 8 testada pelo miband-hack também ficava em silêncio: este firmware provavelmente não aceita mini-apps.",
+            )
+        }
         if (existing != null) {
             if (!replaceExisting) throw AppAlreadyInstalledException(existing)
             onProgress(InstallProgress("Removendo a versão antiga…", null))
@@ -110,7 +141,8 @@ class MiniAppManager(
     /** Pedido de instalação (20/1). Retorna o status da banda (0 = aceito). */
     private suspend fun requestInstall(file: RpkFile.Valid, onProgress: (InstallProgress) -> Unit): Int {
         onProgress(InstallProgress("Pedindo a instalação…", null))
-        val reply = client.request(
+        val reply = try {
+            client.request(
             Command.newBuilder().setType(Commands.RPK).setSubtype(Commands.RPK_INSTALL)
                 .setRpk(
                     Rpk.newBuilder().setRpkInfo(
@@ -121,7 +153,11 @@ class MiniAppManager(
                     ),
                 ).build(),
             "pedido de instalação do app",
-        ) { it.isA(Commands.RPK, Commands.RPK_INSTALL) }
+            ) { it.isA(Commands.RPK, Commands.RPK_INSTALL) }
+        } catch (e: BandTimeoutException) {
+            // O arquivo só vai depois que a banda aceita este pedido: sem resposta, nada foi enviado.
+            throw InstallException("A banda não respondeu ao pedido de instalação do app; nada foi enviado.")
+        }
         return reply.rpk.rpkInstallStart.cmd
     }
 

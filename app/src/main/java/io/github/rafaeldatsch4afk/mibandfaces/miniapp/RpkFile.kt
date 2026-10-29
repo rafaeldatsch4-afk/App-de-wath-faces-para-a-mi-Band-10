@@ -55,8 +55,8 @@ sealed interface RpkFile {
 
         /** Lê e valida [bytes] como um mini-app para [model]. */
         fun parse(bytes: ByteArray, model: BandModel = BandModel.BAND_10): RpkFile {
-            if (!model.supportsApps) {
-                return Rejected(bytes, "A ${model.label} não aceita mini-apps (.rpk): só watch faces. Ela não respondeu a nenhum comando de app nos testes do miband-hack.")
+            if (!model.mayRunApps) {
+                return Rejected(bytes, "A ${model.label} não aceita mini-apps (.rpk): só watch faces.")
             }
             if (bytes.size > MAX_SIZE) return Rejected(bytes, "Arquivo grande demais (${bytes.size / 1024} KB) para um mini-app")
             if (!looksLikeRpk(bytes)) return Rejected(bytes, "Não é um mini-app .rpk (não é um arquivo ZIP)")
@@ -106,6 +106,10 @@ sealed interface RpkFile {
             val versionCode = manifest.optInt("versionCode", 1)
 
             val warnings = mutableListOf<String>()
+            if (model.appsExperimental) {
+                warnings += "Experimental na ${model.label}: no teste do miband-hack (firmware 2.3.14) ela não aceitava mini-apps. " +
+                    "O app pergunta à banda antes; se ela não responder ou recusar, nada é enviado."
+            }
             val deviceTypes = manifest.optJSONArray("deviceTypeList")?.let { a -> List(a.length()) { a.optString(it) } }
             if (deviceTypes != null && "watch" !in deviceTypes) {
                 warnings += "O manifest não lista \"watch\" entre os aparelhos (${deviceTypes.joinToString()}): pode não ser para a banda."

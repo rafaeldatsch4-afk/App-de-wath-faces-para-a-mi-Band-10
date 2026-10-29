@@ -1,0 +1,143 @@
+<template>
+  <!-- Só div/text com for, como no mini-app Juros 1.0.0, que rodou numa Mi Band 10. -->
+  <div class="page">
+    <div class="visor">
+      <div class="espaco"></div>
+      <text class="{{expressaoCls}}">{{expressao}}</text>
+      <text class="{{visorCls}}">{{visor}}</text>
+    </div>
+    <div class="linha" for="{{linha in teclas}}">
+      <div class="{{t.cls}}" for="{{t in linha}}" onclick="tocar(t.k)">
+        <text class="{{t.textoCls}}">{{t.t}}</text>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import { estadoInicial, tecla } from '../../common/calc.js'
+
+function k(t, key, tipo) {
+  return { t: t, k: key, cls: 'tecla ' + tipo, textoCls: tipo === 'op' || tipo === 'igual' ? 'rotulo rotuloEscuro' : 'rotulo' }
+}
+
+// 5 linhas × 4 teclas, como a calculadora do celular. Raiz quadrada e porcentagem na primeira linha.
+var TECLAS = [
+  [k('C', 'C', 'fn'), k('√', '√', 'fn'), k('%', '%', 'fn'), k('÷', '÷', 'op')],
+  [k('7', '7', 'num'), k('8', '8', 'num'), k('9', '9', 'num'), k('×', '×', 'op')],
+  [k('4', '4', 'num'), k('5', '5', 'num'), k('6', '6', 'num'), k('−', '−', 'op')],
+  [k('1', '1', 'num'), k('2', '2', 'num'), k('3', '3', 'num'), k('+', '+', 'op')],
+  [k('⌫', 'DEL', 'fn'), k('0', '0', 'num'), k(',', ',', 'num'), k('=', '=', 'igual')]
+]
+
+// Maior letra (classe .fNN) em que o texto cabe em [largura] px. Cada caractere ocupa até
+// ~0,62 da altura da letra (medido com uma fonte mais larga que a da banda, por segurança).
+var FONTES = [48, 40, 34, 28, 24, 20, 18, 16, 14]
+var LARGURA_VISOR = 168
+function fonte(texto, maximo) {
+  for (var i = 0; i < FONTES.length; i++) {
+    var f = FONTES[i]
+    if (f <= maximo && texto.length * f * 0.62 <= LARGURA_VISOR) return 'f' + f
+  }
+  return 'f14'
+}
+
+export default {
+  private: {
+    estado: estadoInicial(),
+    visor: '0',
+    visorCls: 'valor f48',
+    expressao: '',
+    expressaoCls: 'expressao f18',
+    teclas: TECLAS
+  },
+
+  tocar(key) {
+    var e = tecla(this.estado, key)
+    this.estado = e
+    this.visor = e.visor
+    this.visorCls = 'valor ' + fonte(e.visor, 48)
+    this.expressao = e.expressao
+    this.expressaoCls = 'expressao ' + fonte(e.expressao, 18)
+  },
+
+  // Gesto de voltar: fecha o app. Mesmo padrão de uma calculadora que já roda na Mi Band 10
+  // (sempre retorna true e sai com this.$app.exit()).
+  onBackPress() {
+    this.$app.exit()
+    return true
+  }
+}
+</script>
+
+<style>
+/* Tela da Mi Band 8 e 9: 192 × 490. A ponta da tela é arredondada: espaço em cima e embaixo. */
+.page {
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  background-color: #000000;
+  padding: 36px 6px 26px 6px;
+}
+
+.visor {
+  height: 104px;
+  flex-direction: column;
+  padding: 0 8px 6px 8px;
+}
+
+/* Empurra o visor para baixo (o mesmo espaçador do Juros 1.0.0, que rodou na banda). */
+.espaco {
+  flex: 1;
+}
+
+.expressao {
+  width: 100%;
+  color: #8a8a8e;
+  text-align: right;
+}
+
+.valor {
+  width: 100%;
+  color: #ffffff;
+  text-align: right;
+}
+
+.f48 { font-size: 48px; }
+.f40 { font-size: 40px; }
+.f34 { font-size: 34px; }
+.f28 { font-size: 28px; }
+.f24 { font-size: 24px; }
+.f20 { font-size: 20px; }
+.f18 { font-size: 18px; }
+.f16 { font-size: 16px; }
+.f14 { font-size: 14px; }
+
+.linha {
+  flex: 1;
+  flex-direction: row;
+}
+
+.tecla {
+  flex: 1;
+  margin: 3px;
+  border-radius: 22px;
+  justify-content: center;
+  align-items: center;
+}
+
+.num { background-color: #2c2c2e; }
+.fn { background-color: #5a5a5e; }
+.op { background-color: #ff9f0a; }
+.igual { background-color: #30d158; }
+
+.rotulo {
+  font-size: 28px;
+  color: #ffffff;
+}
+
+.rotuloEscuro {
+  color: #000000;
+  font-weight: bold;
+}
+</style>

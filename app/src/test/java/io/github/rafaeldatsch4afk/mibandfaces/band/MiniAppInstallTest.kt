@@ -59,6 +59,50 @@ class MiniAppInstallTest {
     }
 
     @Test
+    fun silentBandGetsNothing() = runBlocking {
+        // Firmware sem mini-apps (Mi Band 8 do miband-hack): a banda não responde à lista.
+        val band = FaceBand(key).apply { answersApps = false }
+        val client = BandClient(PacketLog(), companion, config, requestTimeoutMs = 500, keepAliveIdleMs = 0)
+        client.connect(band.transport, key)
+        val apps = manager(client)
+        try {
+            apps.probe()
+            fail("deveria expirar")
+        } catch (e: BandTimeoutException) {
+            assertEquals(false, apps.answered.value)
+        }
+        try {
+            apps.install(rpk, replaceExisting = false) {}
+            fail("deveria falhar")
+        } catch (e: InstallException) {
+            assertTrue(e.message!!.contains("nada foi enviado"))
+        }
+        assertEquals(0, band.uploadType)
+        assertTrue(band.commandsReceived.none { it.type == 20 && it.subtype == 1 })
+        assertTrue(band.commandsReceived.none { it.type == 22 })
+        assertTrue(client.isReady)
+        client.disconnect()
+    }
+
+    @Test
+    fun noAnswerToInstallRequestSendsNothing() = runBlocking {
+        val band = FaceBand(key).apply { answersAppInstall = false }
+        val client = BandClient(PacketLog(), companion, config, requestTimeoutMs = 500, keepAliveIdleMs = 0)
+        client.connect(band.transport, key)
+        val apps = manager(client)
+        apps.probe()
+        assertEquals(true, apps.answered.value)
+        try {
+            apps.install(rpk, replaceExisting = false) {}
+            fail("deveria falhar")
+        } catch (e: InstallException) {
+            assertTrue(e.message!!.contains("nada foi enviado"))
+        }
+        assertTrue(band.commandsReceived.none { it.type == 22 })
+        client.disconnect()
+    }
+
+    @Test
     fun reportsRefusal() = runBlocking {
         val band = FaceBand(key).apply { rpkInstallStatus = 5 }
         val client = BandClient(PacketLog(), companion, config, requestTimeoutMs = 2_000, keepAliveIdleMs = 0)
