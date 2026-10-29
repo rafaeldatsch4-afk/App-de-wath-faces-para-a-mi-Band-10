@@ -7,10 +7,11 @@ contas) e troca o quiz por uma calculadora e o botão PLAY por um botão **CALC*
 
 Dois estilos (`--estilo`):
 
-- **vidro** (padrão): tudo redesenhado em "vidro líquido": papel de parede colorido, painéis de vidro
-  fosco com borda clara para bateria, data e saúde, algarismos brancos translúcidos, data em dia/mês e
-  dias da semana em português (também na tela AOD). A calculadora tem teclas de vidro, com as
-  operações em vidro laranja e o = em verde. O layout (posições e tamanhos) é o da face original;
+- **vidro** (padrão): tudo redesenhado em "vidro líquido", sem cores: fundo grafite com reflexos
+  cinza, painéis de vidro fosco com borda clara para bateria, data e saúde, algarismos brancos
+  translúcidos, data em dia/mês e dias da semana em português (também na tela AOD). A calculadora
+  tem teclas de vidro; as operações e o = se destacam por um vidro mais claro. O layout (posições e
+  tamanhos) é o da face original;
 - **creme**: o visual da face original (creme e marrom); só o botão e o app mudam.
 
 ```

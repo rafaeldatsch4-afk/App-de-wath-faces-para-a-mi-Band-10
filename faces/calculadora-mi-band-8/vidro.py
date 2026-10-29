@@ -1,21 +1,18 @@
-"""Desenho no estilo "vidro líquido": papel de parede colorido e desfocado, painéis de vidro fosco com
+"""Desenho no estilo "vidro líquido", sem cores: fundo grafite desfocado, painéis de vidro fosco com
 borda clara, texto branco com sombra suave. Tudo é desenhado aqui com o Pillow; o vidro dos painéis
 fica "assado" no fundo (a banda não desfoca nada em tempo real)."""
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 ESCALA = 4  # desenha 4× maior e reduz, para bordas suaves
 
-FUNDO_BASE = (8, 12, 38)
+# Sem cores: grafite quase preto com reflexos de luz cinza (o vidro aparece pelo brilho e pela borda).
+FUNDO_BASE = (6, 6, 8)
 MANCHAS = [  # (cor, centro x, centro y, raio) numa tela de 192 × 490
-    ((47, 107, 255), 10, 40, 150),
-    ((130, 70, 255), 190, 190, 150),
-    ((255, 79, 154), 0, 350, 140),
-    ((255, 158, 66), 185, 480, 130),
-    ((40, 200, 255), 150, 20, 90),
+    ((92, 92, 98), 20, 30, 150),
+    ((58, 58, 64), 190, 230, 150),
+    ((78, 78, 84), 0, 400, 130),
+    ((44, 44, 48), 180, 480, 120),
 ]
-LARANJA = (255, 159, 10)
-VERDE = (48, 209, 88)
-VERMELHO_CLARO = (255, 130, 130)
 
 
 def fonte(tam):

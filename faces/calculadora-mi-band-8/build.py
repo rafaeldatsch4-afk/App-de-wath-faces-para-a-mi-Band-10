@@ -420,12 +420,9 @@ def imagens_do_app_vidro(c):
     fundo = vidro.painel(fundo, (8, 38, 184, 100), 20)
     fundo = vidro.painel(fundo, (c['SAIR_X'], c['SAIR_Y'], c['SAIR_X'] + 56, c['SAIR_Y'] + 26), 13, forca=0.25)
     for i, k in enumerate(c['TECLAS']):
-        if k in 'dxsa':
-            tinta, forca = vidro.LARANJA, 0.55
-        elif k == 'i':
-            tinta, forca = vidro.VERDE, 0.55
-        else:
-            tinta, forca = (255, 255, 255), 0.32 if k in 'crpb' else 0.16
+        # Sem cores: as operações e o = se destacam por um vidro mais claro.
+        forca = 0.46 if k == 'i' else 0.34 if k in 'dxsa' else 0.24 if k in 'crpb' else 0.13
+        tinta = (255, 255, 255)
         fundo = vidro.painel(fundo, posicao_tecla(c, i), 14, tinta, forca)
     fundo = vidro.pontilhar_565(fundo)
     for i in range(c['FUNDO_PARTES']):
@@ -448,7 +445,7 @@ def imagens_do_app_vidro(c):
                              sombra=prefixo == 'g_')
             arq[f'{prefixo}{s}.bin'] = lvgl_bin(im, True)
 
-    arq['erro.bin'] = lvgl_bin(vidro.texto((c['ERRO_L'], c['VISOR_A']), 'Erro', 20, cor=vidro.VERMELHO_CLARO), True)
+    arq['erro.bin'] = lvgl_bin(vidro.texto((c['ERRO_L'], c['VISOR_A']), 'Erro', 20), True)
     im = vidro.borda((56, 26), 13, 220, 70, 1.2)
     im.alpha_composite(vidro.texto((56, 26), 'sair', 14))
     arq['sair.bin'] = lvgl_bin(im, True)
