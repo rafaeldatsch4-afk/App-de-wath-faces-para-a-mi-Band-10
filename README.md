@@ -39,6 +39,8 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 
 - [x] **Calculadora na Mi Band 8** em forma de watch face: a Mi Band 8 não aceita `.rpk`, mas as faces de jogo da Xiaomi trazem um app embutido aberto por um botão. [`faces/calculadora-mi-band-8`](faces/calculadora-mi-band-8/README.md) troca o jogo de uma dessas faces por uma calculadora (botão CALC), no estilo vidro líquido ou no visual original. Ainda não testada numa banda real
 
+- [x] **Mini-app Descontos** ([`miniapps/descontos`](miniapps/descontos/README.md)): pede o preço original e o desconto (%) e mostra quanto você paga e quanto economiza (R$ 200 com 20% = R$ 160). Para a Mi Band 10; ainda não testado na banda
+
 ### Futuro (ainda não feito)
 
 - Editor visual de watch face (fundo, relógio digital, data, bateria, passos, batimentos) exportando `.face`
