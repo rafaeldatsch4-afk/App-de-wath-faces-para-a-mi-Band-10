@@ -38,7 +38,7 @@ export function paraNumero(texto) {
 // Devolve a mensagem de erro do campo, ou '' se o valor serve.
 export function validar(campoId, numero) {
   if (isNaN(numero)) return 'Digite um valor';
-  if (campoId === 'preco' && numero <= 0) return 'O preço precisa ser maior que zero';
+  if (campoId === 'preco' && numero <= 0) return 'Maior que zero';
   if (campoId === 'desconto' && numero > MAX_DESCONTO) return 'No máximo ' + MAX_DESCONTO + '%';
   return '';
 }

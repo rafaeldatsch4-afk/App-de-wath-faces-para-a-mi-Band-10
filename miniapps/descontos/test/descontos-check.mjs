@@ -69,12 +69,17 @@ assert.ok(isNaN(paraNumero(',')));
 
 // Validação
 assert.equal(validar('preco', NaN), 'Digite um valor');
-assert.equal(validar('preco', 0), 'O preço precisa ser maior que zero');
+assert.equal(validar('preco', 0), 'Maior que zero');
 assert.equal(validar('preco', 0.01), '');
 assert.equal(validar('desconto', NaN), 'Digite um valor');
 assert.equal(validar('desconto', 0), '');
 assert.equal(validar('desconto', 100), '');
 assert.equal(validar('desconto', 100.01), 'No máximo 100%');
 assert.equal(validar('desconto', 150), 'No máximo 100%');
+
+// Toda mensagem de erro cabe numa linha da banda (192 px a 16 px de letra: até 19 caracteres)
+for (const msg of [validar('preco', NaN), validar('preco', 0), validar('desconto', 150)]) {
+  assert.ok(msg.length <= 19, `"${msg}" não cabe numa linha`);
+}
 
 console.log('descontos: todas as conferências passaram');

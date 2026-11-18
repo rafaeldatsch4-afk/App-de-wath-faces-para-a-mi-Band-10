@@ -163,7 +163,7 @@ assert.equal(p.aviso, 'Digite um valor');
 assert.ok(p.avisoCls.startsWith('erro '));
 p.tocar('0');
 p.confirmar();
-assert.equal(p.aviso, 'O preço precisa ser maior que zero');
+assert.equal(p.aviso, 'Maior que zero');
 p.tocar('5');
 assert.ok(p.avisoCls.startsWith('dica '));
 assert.equal(p.mostrado, 'R$ 5');
