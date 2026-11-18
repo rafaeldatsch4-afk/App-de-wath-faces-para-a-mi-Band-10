@@ -41,6 +41,8 @@ Resumo do protocolo: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 
 - [x] **Mini-app Descontos** ([`miniapps/descontos`](miniapps/descontos/README.md)): pede o preço original e o desconto (%) e mostra quanto você paga e quanto economiza (R$ 200 com 20% = R$ 160). Para a Mi Band 10; ainda não testado na banda
 
+- [x] **Mini-app Pitágoras** ([`miniapps/pitagoras`](miniapps/pitagoras/README.md)): marque o X no lado que quer descobrir (hipotenusa ou cateto), digite os outros dois e veja o resultado do teorema de Pitágoras (3 e 4 = 5). Para a Mi Band 10; ainda não testado na banda
+
 ### Futuro (ainda não feito)
 
 - Editor visual de watch face (fundo, relógio digital, data, bateria, passos, batimentos) exportando `.face`
